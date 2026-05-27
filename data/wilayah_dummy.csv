@@ -1,0 +1,7 @@
+wilayah,ispu,kategori,lat,lon,pm25,pm10,no2,so2,co,o3
+Jakarta Pusat,68,Sedang,-6.1924,106.8232,24,41,18,7,0.6,50
+Jakarta Utara,65,Sedang,-6.1565,106.9056,22,38,16,6,0.5,48
+Jakarta Barat,102,Tidak Sehat,-6.1881,106.7567,46,78,32,15,1.2,85
+Jakarta Selatan,71,Sedang,-6.2615,106.8106,26,44,20,8,0.7,52
+Jakarta Timur,68,Sedang,-6.2250,106.9004,24,42,19,7,0.6,50
+Kep. Seribu,42,Baik,-5.7500,106.6000,12,22,8,3,0.3,28
