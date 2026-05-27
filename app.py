@@ -2,25 +2,24 @@
 ================================================================
 JakU - Dashboard Kualitas Udara DKI Jakarta
 ================================================================
-Versi 2: redesign mengikuti spesifikasi mockup Figma.
+Aplikasi Streamlit untuk monitoring kualitas udara DKI Jakarta
+dengan integrasi model machine learning XGBoost.
 
-Perbaikan utama:
-- Layout grid presisi (max 1400px)
-- Sidebar modern + active state biru
-- Typography Plus Jakarta Sans / Inter
-- Card border-radius 20px + soft shadow
-- Hero ISPU dengan angka raksasa
-- Map rounded container + legend rapi
-- Navigation seamless via session_state
-- Tombol "Lihat Selengkapnya" routing ke Detail Wilayah
+Halaman:
+    1. Dashboard          - Ringkasan kualitas udara provinsi
+    2. Detail Wilayah     - Informasi per kota administratif
+    3. Simulasi Prediksi  - Prediksi ISPU dari 6 polutan
+    4. Edukasi & Insight  - Pengetahuan ISPU, dampak, dan tips
 """
 
+import os
 import base64
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.express as px
 import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
@@ -45,9 +44,7 @@ DATA_DIR = BASE_DIR / "data"
 MODELS_DIR = BASE_DIR / "models"
 ASSETS_DIR = BASE_DIR / "assets"
 
-PAGES = ["Dashboard", "Detail Wilayah", "Simulasi Prediksi ISPU", "Edukasi & Insight"]
-PAGE_ICONS = ["grid-1x2", "geo-alt", "bar-chart-line", "book"]
-
+# Mapping kategori ISPU -> warna, emoji, deskripsi
 KATEGORI_INFO = {
     "Baik": {
         "warna": "#16A34A", "warna_bg": "#DCFCE7", "emoji": "😊",
@@ -58,7 +55,7 @@ KATEGORI_INFO = {
     "Sedang": {
         "warna": "#2563EB", "warna_bg": "#DBEAFE", "emoji": "😐",
         "rentang": "51 - 100",
-        "deskripsi": "udara masih dapat diterima untuk beraktivitas di luar ruangan.",
+        "deskripsi": "Masih dapat diterima untuk beraktivitas di luar ruangan.",
         "rekomendasi": "Aman untuk beraktivitas di luar ruangan. Cocok untuk berolahraga, jalan kaki, dan kegiatan outdoor lainnya."
     },
     "Tidak Sehat": {
@@ -81,34 +78,41 @@ KATEGORI_INFO = {
     },
 }
 
+# Informasi 6 polutan untuk popup
 INFO_POLUTAN = {
     "PM2.5": {
-        "warna": "#2563EB", "satuan": "µg/m³",
+        "warna": "#2563EB",
+        "satuan": "µg/m³",
         "deskripsi_pendek": "Partikel sangat halus berukuran ≤ 2.5 mikron",
         "deskripsi": "Partikel sangat halus yang dapat masuk jauh ke dalam paru-paru dan aliran darah."
     },
     "PM10": {
-        "warna": "#60A5FA", "satuan": "µg/m³",
+        "warna": "#60A5FA",
+        "satuan": "µg/m³",
         "deskripsi_pendek": "Partikel halus berukuran ≤ 10 mikron",
         "deskripsi": "Partikel halus yang dapat masuk ke saluran pernapasan bagian atas dan menyebabkan iritasi."
     },
     "NO₂": {
-        "warna": "#8B5CF6", "satuan": "µg/m³",
+        "warna": "#8B5CF6",
+        "satuan": "µg/m³",
         "deskripsi_pendek": "Nitrogen dioksida, gas hasil pembakaran",
         "deskripsi": "Gas hasil pembakaran kendaraan bermotor dan industri, dapat mengiritasi paru-paru."
     },
     "SO₂": {
-        "warna": "#F59E0B", "satuan": "µg/m³",
+        "warna": "#F59E0B",
+        "satuan": "µg/m³",
         "deskripsi_pendek": "Sulfur dioksida, gas dari pembakaran bahan bakar fosil",
         "deskripsi": "Gas dari pembakaran bahan bakar fosil, dapat menyebabkan iritasi mata dan saluran pernapasan."
     },
     "CO": {
-        "warna": "#10B981", "satuan": "mg/m³",
+        "warna": "#10B981",
+        "satuan": "mg/m³",
         "deskripsi_pendek": "Karbon monoksida, gas tidak berwarna dan tidak berbau",
         "deskripsi": "Gas tidak berwarna dan tidak berbau yang dapat mengganggu pasokan oksigen dalam tubuh."
     },
     "O₃": {
-        "warna": "#06B6D4", "satuan": "µg/m³",
+        "warna": "#06B6D4",
+        "satuan": "µg/m³",
         "deskripsi_pendek": "Ozon, terbentuk dari reaksi kimia di atmosfer",
         "deskripsi": "Ozon terbentuk dari reaksi kimia polutan dengan sinar matahari, dapat menyebabkan sesak napas."
     },
@@ -116,90 +120,78 @@ INFO_POLUTAN = {
 
 
 # ================================================================
-# CUSTOM CSS - FULL OVERRIDE
+# CUSTOM CSS
 # ================================================================
 def inject_css():
     st.markdown("""
     <style>
-    /* ============================================================
-       FONTS
-       ============================================================ */
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap');
+    /* Import font modern */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-    html, body, [class*="css"], .stApp, .main, .block-container,
-    button, input, textarea, select {
-        font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    html, body, [class*="css"], .stApp, .main, .block-container {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* ============================================================
-       GLOBAL LAYOUT
-       ============================================================ */
+    /* Background utama */
     .stApp {
-        background-color: #F8FAFC;
+        background-color: #FAFBFC;
     }
 
+    /* Hilangkan top padding default */
     .block-container {
         padding-top: 1.5rem !important;
         padding-bottom: 3rem !important;
-        padding-left: 2.5rem !important;
-        padding-right: 2.5rem !important;
-        max-width: 1480px !important;
+        max-width: 100% !important;
     }
 
+    /* Hilangkan header & footer Streamlit */
     header[data-testid="stHeader"] {
         background: transparent;
         height: 0;
     }
-    #MainMenu, footer, .stDeployButton {visibility: hidden;}
+    #MainMenu, footer {visibility: hidden;}
 
-    /* Scrollbar halus */
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 999px; }
-    ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
-
-    /* ============================================================
-       SIDEBAR
-       ============================================================ */
+    /* ============ SIDEBAR ============ */
     [data-testid="stSidebar"] {
         background-color: #FFFFFF;
-        border-right: 1px solid #EEF2F7;
+        border-right: 1px solid #E2E8F0;
+        padding-top: 1rem;
     }
     [data-testid="stSidebar"] > div:first-child {
-        padding-top: 1.25rem;
+        padding-top: 1rem;
     }
-    [data-testid="stSidebar"] [data-testid="stSidebarHeader"] { display: none; }
 
     .sidebar-logo {
         text-align: center;
-        padding: 0.25rem 1rem 0.1rem 1rem;
+        padding: 0.5rem 1rem 0.25rem 1rem;
     }
     .sidebar-subtitle {
         text-align: center;
         font-size: 0.78rem;
         color: #64748B;
         font-weight: 500;
-        margin-bottom: 1.75rem;
-        letter-spacing: 0.01em;
+        margin-bottom: 1.5rem;
+        letter-spacing: 0.02em;
     }
+
     .sidebar-footer {
         background-color: #F8FAFC;
-        border: 1px solid #EEF2F7;
-        border-radius: 14px;
-        padding: 0.95rem 1.1rem;
-        margin: 1rem 0.6rem;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        margin: 1rem 0.5rem;
     }
     .sidebar-footer-title {
         font-size: 0.85rem;
         font-weight: 700;
         color: #0F172A;
-        margin-bottom: 0.4rem;
+        margin-bottom: 0.35rem;
     }
     .sidebar-footer-desc {
         font-size: 0.72rem;
         color: #64748B;
-        line-height: 1.5;
-        margin-bottom: 0.65rem;
+        line-height: 1.45;
+        margin-bottom: 0.6rem;
     }
     .sidebar-footer-ts-label {
         font-size: 0.7rem;
@@ -212,213 +204,170 @@ def inject_css():
         color: #0F172A;
     }
 
-    /* ============================================================
-       PAGE HEADER
-       ============================================================ */
+    /* ============ HEADER HALAMAN ============ */
     .page-title {
-        font-size: 2rem;
+        font-size: 1.65rem;
         font-weight: 700;
         color: #0F172A;
-        margin-bottom: 0.3rem;
-        letter-spacing: -0.025em;
-        line-height: 1.15;
+        margin-bottom: 0.25rem;
+        letter-spacing: -0.01em;
     }
     .page-subtitle {
-        font-size: 1rem;
+        font-size: 0.95rem;
         color: #64748B;
-        margin-bottom: 1.75rem;
-        font-weight: 400;
+        margin-bottom: 1.5rem;
     }
+
     .updated-card {
         background-color: #FFFFFF;
-        border: 1px solid #EEF2F7;
+        border: 1px solid #E2E8F0;
         border-radius: 14px;
         padding: 0.85rem 1.25rem;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.7rem;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
-    }
-    .updated-card-icon {
-        font-size: 1.15rem;
+        display: inline-block;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
     .updated-card-label {
         font-size: 0.72rem;
         color: #64748B;
-        font-weight: 500;
-        line-height: 1.2;
+        margin-bottom: 0.15rem;
     }
     .updated-card-value {
         font-size: 0.92rem;
         font-weight: 700;
         color: #0F172A;
-        line-height: 1.2;
     }
 
-    /* ============================================================
-       CARD
-       ============================================================ */
+    /* ============ CARD UMUM ============ */
     .card {
         background-color: #FFFFFF;
-        border: 1px solid #EEF2F7;
-        border-radius: 20px;
+        border: 1px solid #E2E8F0;
+        border-radius: 16px;
         padding: 1.5rem;
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
         transition: all 0.25s ease;
         height: 100%;
     }
     .card:hover {
-        box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
         transform: translateY(-1px);
     }
     .card-title {
-        font-size: 1.05rem;
+        font-size: 1.02rem;
         font-weight: 700;
         color: #0F172A;
-        margin-bottom: 1rem;
-        letter-spacing: -0.005em;
+        margin-bottom: 0.5rem;
     }
 
-    /* ============================================================
-       HERO ISPU
-       ============================================================ */
-    .hero-row {
+    /* ============ CARD via st.container(border=True) — FIX #3 ============
+       Pattern lama (st.markdown("<div class='card'>") ... </div>) bocor
+       karena tiap st.markdown jadi DOM container terpisah. Solusi: pakai
+       st.container(border=True) native + style border wrapper-nya. */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 16px !important;
+        border: 1px solid #E5E7EB !important;
+        background-color: #FFFFFF !important;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+        padding: 1.25rem 1.4rem !important;
+        transition: all 0.25s ease;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"]:hover {
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+    }
+
+    /* Map container — rounded corners untuk iframe folium */
+    iframe[title="streamlit_folium.st_folium"] {
+        border-radius: 12px;
+        border: 1px solid #EEF2F7;
+    }
+
+    /* ============ ISPU BESAR ============ */
+    .ispu-hero {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         gap: 1.5rem;
-        margin-top: 0.25rem;
     }
-    .hero-number {
-        font-size: 5.5rem;
+    .ispu-number {
+        font-size: 4.5rem;
         font-weight: 800;
-        line-height: 0.95;
-        letter-spacing: -0.05em;
+        line-height: 1;
         color: #2563EB;
+        letter-spacing: -0.04em;
     }
-    .hero-label {
+    .ispu-label {
         font-size: 0.95rem;
         font-weight: 600;
         color: #64748B;
-        margin-top: 0.3rem;
+        margin-top: 0.25rem;
     }
-    .hero-emoji {
-        font-size: 2.5rem;
-        line-height: 1;
-        margin-bottom: 0.4rem;
-    }
-    .hero-status {
+    .ispu-status {
         font-size: 1.5rem;
         font-weight: 700;
-        margin-bottom: 0.4rem;
-        letter-spacing: -0.01em;
+        margin-bottom: 0.35rem;
     }
-    .hero-desc {
+    .ispu-desc {
         font-size: 0.88rem;
         color: #475569;
-        line-height: 1.55;
-        max-width: 22rem;
+        line-height: 1.5;
+        max-width: 24rem;
     }
-    .hero-illustration {
-        text-align: center;
-        padding: 0.5rem;
-        margin-left: auto;
+    .ispu-emoji {
+        font-size: 3rem;
+        margin-bottom: 0.5rem;
     }
 
-    /* Polutan dominan strip */
-    .dom-strip {
+    /* ============ POLUTAN DOMINAN ============ */
+    .polutan-dominan-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
         margin-top: 1.5rem;
-        padding-top: 1.2rem;
+        padding-top: 1rem;
         border-top: 1px solid #F1F5F9;
     }
-    .dom-strip-left {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.92rem;
+    .polutan-dominan-text {
+        font-size: 0.9rem;
         color: #0F172A;
     }
-    .dom-strip-icon { color: #16A34A; font-size: 1rem; }
+    .polutan-dominan-icon {
+        color: #16A34A;
+    }
 
-    /* Pollutant pills grid (6 polutan) */
+    /* ============ METRIC POLUTAN ROW ============ */
     .pollutant-grid {
         display: grid;
         grid-template-columns: repeat(6, 1fr);
-        gap: 0.5rem;
-        margin-top: 1.2rem;
+        gap: 1rem;
+        margin-top: 1rem;
     }
     .pollutant-cell {
         text-align: center;
-        padding: 0.25rem 0;
     }
     .pollutant-name {
-        font-size: 0.78rem;
+        font-size: 0.82rem;
         font-weight: 600;
         color: #64748B;
-        margin-bottom: 0.3rem;
-        letter-spacing: 0.01em;
+        margin-bottom: 0.25rem;
     }
     .pollutant-value {
-        font-size: 1.75rem;
+        font-size: 1.7rem;
         font-weight: 800;
         color: #0F172A;
-        line-height: 1;
-        letter-spacing: -0.02em;
+        line-height: 1.1;
     }
     .pollutant-unit {
         font-size: 0.7rem;
         color: #94A3B8;
-        margin-top: 0.25rem;
-        font-weight: 500;
+        margin-top: 0.1rem;
     }
 
-    /* ============================================================
-       MAP CONTAINER
-       ============================================================ */
-    .map-wrapper {
-        border-radius: 14px;
-        overflow: hidden;
-        border: 1px solid #EEF2F7;
-    }
-    iframe { border-radius: 14px; }
-
-    .legend-block {
-        padding: 0.25rem 0 0 0.5rem;
-    }
-    .legend-title {
-        font-weight: 700;
-        font-size: 0.9rem;
-        color: #0F172A;
-        margin-bottom: 0.7rem;
-    }
-    .legend-row {
-        display: flex;
-        align-items: center;
-        gap: 0.55rem;
-        margin: 0.4rem 0;
-        font-size: 0.83rem;
-        color: #334155;
-    }
-    .legend-dot {
-        width: 0.7rem;
-        height: 0.7rem;
-        border-radius: 999px;
-        flex-shrink: 0;
-        box-shadow: 0 0 0 3px rgba(255,255,255,1), 0 0 0 4px rgba(15,23,42,0.06);
-    }
-
-    /* ============================================================
-       PREDIKSI LIST
-       ============================================================ */
+    /* ============ PREDIKSI LIST ============ */
     .pred-row {
         display: grid;
-        grid-template-columns: 1.1fr 0.8fr 1fr 0.9fr;
+        grid-template-columns: 1.1fr 0.7fr 1fr 0.8fr;
         align-items: center;
         gap: 0.8rem;
-        padding: 0.6rem 0;
+        padding: 0.55rem 0;
         border-bottom: 1px solid #F1F5F9;
     }
     .pred-row:last-child { border-bottom: none; }
@@ -438,7 +387,7 @@ def inject_css():
         min-width: 3rem;
     }
     .pred-cat {
-        font-size: 0.86rem;
+        font-size: 0.85rem;
         font-weight: 600;
     }
     .pred-pm {
@@ -447,24 +396,21 @@ def inject_css():
         text-align: right;
     }
 
-    /* ============================================================
-       REKOMENDASI CARD
-       ============================================================ */
+    /* ============ REKOMENDASI CARD ============ */
     .rekom-card {
         background-color: #FFFFFF;
-        border: 1px solid #EEF2F7;
-        border-radius: 16px;
-        padding: 1.1rem 1.25rem;
+        border: 1px solid #E2E8F0;
+        border-radius: 14px;
+        padding: 1.1rem 1.2rem;
         display: flex;
-        gap: 0.9rem;
+        gap: 0.85rem;
         align-items: flex-start;
         transition: all 0.25s ease;
         height: 100%;
     }
     .rekom-card:hover {
-        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
-        transform: translateY(-2px);
-        border-color: #DBEAFE;
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+        transform: translateY(-1px);
     }
     .rekom-icon {
         font-size: 2rem;
@@ -480,104 +426,54 @@ def inject_css():
     .rekom-desc {
         font-size: 0.78rem;
         color: #64748B;
-        line-height: 1.5;
+        line-height: 1.45;
     }
 
-    /* ============================================================
-       INFO BOX ML
-       ============================================================ */
+    /* ============ INFO BOX (ML) ============ */
     .info-box {
         background-color: #EFF6FF;
         border: 1px solid #DBEAFE;
-        border-radius: 14px;
-        padding: 0.95rem 1.25rem;
+        border-radius: 12px;
+        padding: 0.85rem 1.15rem;
         display: flex;
-        gap: 0.7rem;
+        gap: 0.65rem;
         align-items: flex-start;
-        margin: 1.25rem 0;
+        margin-top: 1rem;
     }
-    .info-box-icon {
-        color: #2563EB;
-        font-size: 1.1rem;
-        line-height: 1.4;
-        flex-shrink: 0;
-    }
+    .info-box-icon { color: #2563EB; font-size: 1.1rem; line-height: 1.4; flex-shrink: 0;}
     .info-box-text {
-        font-size: 0.88rem;
+        font-size: 0.85rem;
         color: #1E40AF;
-        line-height: 1.55;
+        line-height: 1.5;
     }
 
-    /* ============================================================
-       BUTTONS — full override
-       ============================================================ */
-    .stButton > button {
-        border-radius: 999px;
-        font-weight: 600;
-        padding: 0.55rem 1.4rem;
-        font-size: 0.88rem;
-        border: 1px solid #E2E8F0;
-        background: #FFFFFF;
-        color: #2563EB;
-        transition: all 0.2s ease;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
-        letter-spacing: 0.005em;
+    /* ============ KATEGORI ISPU CARD (Edukasi) ============ */
+    .kat-card {
+        border-radius: 16px;
+        padding: 1.3rem 1.1rem;
+        height: 100%;
+        border: 1px solid;
     }
-    .stButton > button:hover {
-        background: #F0F7FF;
-        border-color: #2563EB;
-        color: #1D4ED8;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.12);
+    .kat-range {
+        font-size: 1.7rem;
+        font-weight: 800;
+        line-height: 1;
+        letter-spacing: -0.02em;
     }
-    .stButton > button[kind="primary"] {
-        background-color: #2563EB;
-        color: white;
-        border: none;
+    .kat-emoji { font-size: 1.7rem; }
+    .kat-name {
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin-top: 0.85rem;
+        margin-bottom: 0.4rem;
     }
-    .stButton > button[kind="primary"]:hover {
-        background-color: #1D4ED8;
-        transform: translateY(-1px);
-        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28);
+    .kat-desc {
+        font-size: 0.78rem;
+        color: #334155;
+        line-height: 1.45;
     }
 
-    /* ============================================================
-       TABS / SLIDER overrides (untuk halaman lain)
-       ============================================================ */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0.5rem;
-        border-bottom: none;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 999px;
-        padding: 0.5rem 1.1rem;
-        font-weight: 600;
-        color: #64748B;
-        font-size: 0.88rem;
-        transition: all 0.2s ease;
-    }
-    .stTabs [data-baseweb="tab"]:hover {
-        border-color: #BFDBFE;
-        color: #2563EB;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #DBEAFE !important;
-        color: #2563EB !important;
-        border-color: #BFDBFE !important;
-    }
-    .stTabs [data-baseweb="tab-highlight"],
-    .stTabs [data-baseweb="tab-border"] { display: none; }
-
-    .stSlider [data-baseweb="slider"] [role="slider"] {
-        background-color: #2563EB;
-        box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
-    }
-
-    /* ============================================================
-       SIMULASI PREDIKSI (step bar, hasil)
-       ============================================================ */
+    /* ============ STEP BAR (Simulasi) ============ */
     .step-bar {
         background: #EFF6FF;
         border: 1px solid #DBEAFE;
@@ -621,6 +517,8 @@ def inject_css():
         color: #1E40AF;
         line-height: 1.45;
     }
+
+    /* ============ HASIL PREDIKSI ============ */
     .hasil-hero {
         display: flex;
         align-items: flex-start;
@@ -658,33 +556,66 @@ def inject_css():
         line-height: 1.5;
     }
 
-    /* ============================================================
-       EDUKASI - kategori card
-       ============================================================ */
-    .kat-card {
-        border-radius: 16px;
-        padding: 1.3rem 1.1rem;
-        height: 100%;
-        border: 1px solid;
+    /* ============ TABS WILAYAH ============ */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.5rem;
+        border-bottom: none;
     }
-    .kat-range {
-        font-size: 1.7rem;
-        font-weight: 800;
-        line-height: 1;
-        letter-spacing: -0.02em;
+    .stTabs [data-baseweb="tab"] {
+        background-color: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 999px;
+        padding: 0.5rem 1.1rem;
+        font-weight: 600;
+        color: #64748B;
+        font-size: 0.88rem;
     }
-    .kat-emoji { font-size: 1.7rem; }
-    .kat-name {
-        font-size: 1.05rem;
-        font-weight: 700;
-        margin-top: 0.85rem;
-        margin-bottom: 0.4rem;
+    .stTabs [aria-selected="true"] {
+        background-color: #DBEAFE !important;
+        color: #2563EB !important;
+        border-color: #BFDBFE !important;
     }
-    .kat-desc {
-        font-size: 0.78rem;
-        color: #334155;
-        line-height: 1.45;
+    .stTabs [data-baseweb="tab-highlight"] { display: none; }
+    .stTabs [data-baseweb="tab-border"] { display: none; }
+
+    /* ============ BUTTONS ============ */
+    .stButton > button {
+        border-radius: 999px;
+        font-weight: 600;
+        padding: 0.5rem 1.4rem;
+        border: 1px solid #E2E8F0;
+        transition: all 0.2s ease;
     }
+    .stButton > button[kind="primary"] {
+        background-color: #2563EB;
+        color: white;
+        border: none;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #1D4ED8;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(37, 99, 235, 0.25);
+    }
+    .stButton > button[kind="secondary"]:hover {
+        border-color: #2563EB;
+        color: #2563EB;
+    }
+
+    /* ============ SLIDER ============ */
+    .stSlider [data-baseweb="slider"] [role="slider"] {
+        background-color: #2563EB;
+        box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+    }
+
+    /* ============ EXPANDER (popup polutan) ============ */
+    .streamlit-expanderHeader {
+        background-color: #FFFFFF !important;
+        border-radius: 14px !important;
+        font-weight: 600 !important;
+        border: 1px solid #E2E8F0 !important;
+    }
+
+    /* ============ DONUT LEGEND CUSTOM ============ */
     .donut-legend-row {
         display: flex;
         justify-content: space-between;
@@ -708,12 +639,11 @@ def inject_css():
         color: #0F172A;
     }
 
-    /* ============================================================
-       RESPONSIVE
-       ============================================================ */
-    @media (max-width: 992px) {
-        .hero-number { font-size: 4.2rem; }
-        .pollutant-grid { grid-template-columns: repeat(3, 1fr); gap: 0.8rem; }
+    /* Responsivitas tablet/mobile */
+    @media (max-width: 768px) {
+        .ispu-number { font-size: 3rem; }
+        .pollutant-value { font-size: 1.35rem; }
+        .pollutant-grid { grid-template-columns: repeat(3, 1fr); }
         .step-bar { grid-template-columns: 1fr; }
     }
     </style>
@@ -725,6 +655,7 @@ def inject_css():
 # ================================================================
 @st.cache_data
 def load_data():
+    """Memuat semua data dummy."""
     return {
         "ispu":     pd.read_csv(DATA_DIR / "ispu_dummy.csv"),
         "wilayah":  pd.read_csv(DATA_DIR / "wilayah_dummy.csv"),
@@ -735,63 +666,233 @@ def load_data():
 
 @st.cache_resource
 def load_model():
+    """Memuat model XGBoost terlatih beserta artefak pendukungnya."""
     try:
-        return {
-            "model": joblib.load(MODELS_DIR / "model_xgboost.pkl"),
-            "le":    joblib.load(MODELS_DIR / "label_encoder.pkl"),
-            "fitur": joblib.load(MODELS_DIR / "fitur_polutan.pkl"),
-            "ok": True,
-        }
+        model      = joblib.load(MODELS_DIR / "model_xgboost.pkl")
+        le         = joblib.load(MODELS_DIR / "label_encoder.pkl")
+        fitur      = joblib.load(MODELS_DIR / "fitur_polutan.pkl")
+        return {"model": model, "le": le, "fitur": fitur, "ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 def get_logo_b64():
-    p = ASSETS_DIR / "logo.svg"
-    return base64.b64encode(p.read_bytes()).decode() if p.exists() else ""
+    """Logo SVG ke base64 untuk disisipkan sebagai <img>."""
+    logo_path = ASSETS_DIR / "logo.svg"
+    if logo_path.exists():
+        return base64.b64encode(logo_path.read_bytes()).decode()
+    return ""
 
 
 def kategori_dari_ispu(ispu):
-    if ispu <= 50:  return "Baik"
-    if ispu <= 100: return "Sedang"
-    if ispu <= 200: return "Tidak Sehat"
-    if ispu <= 300: return "Sangat Tidak Sehat"
+    """Konversi nilai ISPU ke kategori berdasarkan PERMEN LHK 14/2020."""
+    if ispu <= 50:    return "Baik"
+    if ispu <= 100:   return "Sedang"
+    if ispu <= 200:   return "Tidak Sehat"
+    if ispu <= 300:   return "Sangat Tidak Sehat"
     return "Berbahaya"
 
 
+# =================================================================
+# SVG INLINE HELPERS (FIX #4, #5, #6)
+# -----------------------------------------------------------------
+# Mengganti emoji native (yang terlihat seperti emoji default sistem)
+# dengan SVG inline kustom — konsisten lintas device & sesuai mockup.
+# Logo sprout #0A6847 dan ilustrasi Jakarta juga dipindah ke SVG inline.
+# =================================================================
+def logo_jaku_svg(size=40):
+    """Logo JakU - sprout #0A6847 + teks. Inline SVG (tidak butuh file)."""
+    return f"""
+    <svg width="{size}" height="{size}" viewBox="0 0 64 64"
+         xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">
+      <!-- Daun kiri (gelap) -->
+      <path d="M32 40 C18 40 10 28 14 14 C28 16 36 28 32 40 Z" fill="#0A6847"/>
+      <!-- Daun kanan (terang) -->
+      <path d="M32 38 C46 38 54 26 50 12 C36 14 28 26 32 38 Z" fill="#16A34A"/>
+      <!-- Tunas tengah -->
+      <ellipse cx="32" cy="20" rx="2.5" ry="6" fill="#22C55E"/>
+      <!-- Batang -->
+      <path d="M32 52 L32 38" stroke="#0A6847" stroke-width="3"
+            stroke-linecap="round" fill="none"/>
+    </svg>
+    """.strip()
+
+
+def ispu_emoji_svg(kategori, size=72):
+    """
+    Emoji status udara dalam SVG inline (flat, clean, konsisten).
+    Mengganti emoji native (😐 dll) yang terlihat random per OS.
+    """
+    cfg = {
+        "Baik": {
+            "fill": "#16A34A",
+            "mouth": '<path d="M30 60 Q50 75 70 60" stroke="white" stroke-width="5" stroke-linecap="round" fill="none"/>',
+            "eyes": '<circle cx="36" cy="42" r="4" fill="white"/><circle cx="64" cy="42" r="4" fill="white"/>',
+        },
+        "Sedang": {
+            "fill": "#3B82F6",
+            "mouth": '<line x1="35" y1="62" x2="65" y2="62" stroke="white" stroke-width="5" stroke-linecap="round"/>',
+            "eyes": '<circle cx="36" cy="42" r="4" fill="white"/><circle cx="64" cy="42" r="4" fill="white"/>',
+        },
+        "Tidak Sehat": {
+            "fill": "#F59E0B",
+            "mouth": '<path d="M30 68 Q50 56 70 68" stroke="white" stroke-width="5" stroke-linecap="round" fill="none"/>',
+            "eyes": '<line x1="30" y1="40" x2="42" y2="44" stroke="white" stroke-width="4" stroke-linecap="round"/><line x1="70" y1="40" x2="58" y2="44" stroke="white" stroke-width="4" stroke-linecap="round"/>',
+        },
+        "Sangat Tidak Sehat": {
+            "fill": "#EF4444",
+            "mouth": '<path d="M30 70 Q50 55 70 70" stroke="white" stroke-width="5" stroke-linecap="round" fill="none"/>',
+            "eyes": '<path d="M30 38 L42 48 M42 38 L30 48" stroke="white" stroke-width="4" stroke-linecap="round"/><path d="M58 38 L70 48 M70 38 L58 48" stroke="white" stroke-width="4" stroke-linecap="round"/>',
+        },
+        "Berbahaya": {
+            "fill": "#7C3AED",
+            "mouth": '<path d="M30 70 Q50 55 70 70" stroke="white" stroke-width="5" stroke-linecap="round" fill="none"/>',
+            "eyes": '<circle cx="36" cy="44" r="6" fill="white"/><circle cx="64" cy="44" r="6" fill="white"/><circle cx="36" cy="44" r="2" fill="#7C3AED"/><circle cx="64" cy="44" r="2" fill="#7C3AED"/>',
+        },
+    }
+    c = cfg.get(kategori, cfg["Sedang"])
+    return (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 100 100" '
+        f'xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">'
+        f'<circle cx="50" cy="50" r="46" fill="{c["fill"]}"/>'
+        f'{c["eyes"]}{c["mouth"]}'
+        f'</svg>'
+    )
+
+
+def jakarta_skyline_svg(width=180):
+    """
+    Ilustrasi flat Jakarta skyline (Monas + gedung).
+    Tone hijau-biru lembut sesuai mockup.
+    """
+    return f"""
+    <svg width="{width}" viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#EFF6FF"/>
+          <stop offset="100%" stop-color="#ECFDF5"/>
+        </linearGradient>
+      </defs>
+      <!-- Background sky -->
+      <rect width="200" height="115" fill="url(#skyGrad)" rx="8"/>
+      <!-- Gedung-gedung kiri (siluet) -->
+      <rect x="14" y="70" width="20" height="45" fill="#94A3B8" opacity="0.55" rx="1"/>
+      <rect x="38" y="55" width="16" height="60" fill="#64748B" opacity="0.55" rx="1"/>
+      <rect x="58" y="68" width="22" height="47" fill="#94A3B8" opacity="0.55" rx="1"/>
+      <!-- Monas (tugu tengah) -->
+      <rect x="96" y="42" width="5" height="73" fill="#475569"/>
+      <polygon points="93,42 104,42 98.5,30" fill="#FBBF24"/>
+      <rect x="92" y="100" width="13" height="15" fill="#64748B"/>
+      <!-- Gedung-gedung kanan -->
+      <rect x="115" y="60" width="18" height="55" fill="#64748B" opacity="0.55" rx="1"/>
+      <rect x="137" y="72" width="20" height="43" fill="#94A3B8" opacity="0.55" rx="1"/>
+      <rect x="161" y="58" width="16" height="57" fill="#64748B" opacity="0.55" rx="1"/>
+      <rect x="180" y="75" width="14" height="40" fill="#94A3B8" opacity="0.55" rx="1"/>
+      <!-- Pohon-pohon depan -->
+      <circle cx="22" cy="112" r="9" fill="#16A34A" opacity="0.85"/>
+      <circle cx="76" cy="115" r="7" fill="#16A34A" opacity="0.85"/>
+      <circle cx="128" cy="115" r="8" fill="#16A34A" opacity="0.85"/>
+      <circle cx="180" cy="113" r="9" fill="#16A34A" opacity="0.85"/>
+      <!-- Garis tanah -->
+      <line x1="0" y1="115" x2="200" y2="115" stroke="#E5E7EB" stroke-width="1"/>
+    </svg>
+    """.strip()
+
+
+def render_legend_safe(kategori_info):
+    """
+    FIX #1 & #2 — Legend peta yang reliable.
+
+    Sebelumnya: triple-quote + "".join + indentasi membuat Streamlit/markdown
+    salah mendeteksi code block, sehingga hanya baris pertama yang terender.
+
+    Sekarang: bangun SATU string HTML utuh tanpa newline & tanpa indentasi
+    awal-baris. SATU panggilan st.markdown.
+    """
+    rows = ""
+    for nama, info in kategori_info.items():
+        # Inline-only HTML, NO leading whitespace di awal tag baru
+        rows += (
+            '<div style="display:flex;align-items:center;gap:8px;'
+            'margin:7px 0;font-size:13px;color:#334155;">'
+            f'<span style="width:11px;height:11px;border-radius:50%;'
+            f'background:{info["warna"]};display:inline-block;flex-shrink:0;'
+            'box-shadow:0 0 0 2px #fff,0 0 0 3px rgba(15,23,42,0.06);"></span>'
+            f'<span><strong style="color:#0F172A;font-weight:600;">{nama}</strong> '
+            f'({info["rentang"]})</span>'
+            '</div>'
+        )
+    html = (
+        '<div style="padding-top:4px;">'
+        '<div style="font-weight:700;font-size:14px;color:#0F172A;'
+        'margin-bottom:10px;">Keterangan:</div>'
+        + rows +
+        '</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def prediksi_ispu_xgboost(pm10, pm25, so2, co, o3, no2):
+    """
+    Prediksi kategori ISPU menggunakan model XGBoost dari notebook.
+    Mengembalikan dict: kategori, nilai_ispu (estimasi), confidence.
+    """
     art = load_model()
     if not art["ok"]:
+        # Fallback bobot polutan jika model gagal dimuat
         nilai = pm25 * 0.30 + pm10 * 0.20 + no2 * 0.15 + so2 * 0.15 + co * 0.10 + o3 * 0.10
-        return {"kategori": kategori_dari_ispu(nilai), "nilai_ispu": int(round(nilai)),
-                "confidence": None, "fallback": True}
+        return {
+            "kategori": kategori_dari_ispu(nilai),
+            "nilai_ispu": int(round(nilai)),
+            "confidence": None,
+            "fallback": True,
+        }
 
+    # Bangun input mengikuti urutan fitur dari notebook
     input_df = pd.DataFrame([{
-        "pm_sepuluh": pm10, "pm_duakomalima": pm25, "sulfur_dioksida": so2,
-        "karbon_monoksida": co, "ozon": o3, "nitrogen_dioksida": no2,
+        "pm_sepuluh":        pm10,
+        "pm_duakomalima":    pm25,
+        "sulfur_dioksida":   so2,
+        "karbon_monoksida":  co,
+        "ozon":              o3,
+        "nitrogen_dioksida": no2,
     }])[art["fitur"]]
 
-    pred_idx = art["model"].predict(input_df)[0]
+    model = art["model"]
+    pred_idx = model.predict(input_df)[0]
     kategori_xgb = art["le"].inverse_transform([pred_idx])[0]
+    # kategori_xgb adalah 'BAIK' / 'SEDANG' / 'TIDAK SEHAT'
     kat_map = {"BAIK": "Baik", "SEDANG": "Sedang", "TIDAK SEHAT": "Tidak Sehat"}
     kategori = kat_map.get(kategori_xgb, "Sedang")
 
+    # Probabilitas (jika tersedia)
     confidence = None
     try:
-        proba = art["model"].predict_proba(input_df)[0]
+        proba = model.predict_proba(input_df)[0]
         confidence = float(np.max(proba))
     except Exception:
         pass
 
+    # Estimasi nilai ISPU numerik dari bobot polutan (untuk display)
     nilai = pm25 * 0.30 + pm10 * 0.20 + no2 * 0.15 + so2 * 0.15 + co * 0.10 + o3 * 0.10
-    if kategori == "Baik":          nilai = min(nilai, 50)
-    elif kategori == "Sedang":      nilai = max(51, min(nilai, 100))
-    elif kategori == "Tidak Sehat": nilai = max(101, min(nilai, 200))
-    return {"kategori": kategori, "nilai_ispu": int(round(nilai)),
-            "confidence": confidence, "fallback": False}
+    # Pas kategori dari model dengan rentang display
+    if kategori == "Baik":         nilai = min(nilai, 50)
+    elif kategori == "Sedang":     nilai = max(51, min(nilai, 100))
+    elif kategori == "Tidak Sehat":nilai = max(101, min(nilai, 200))
+
+    return {
+        "kategori": kategori,
+        "nilai_ispu": int(round(nilai)),
+        "confidence": confidence,
+        "fallback": False,
+    }
 
 
 def render_popup_polutan():
+    """
+    Popup "Informasi Polutan" - dipakai di Dashboard, Detail Wilayah,
+    dan Simulasi Prediksi. Konten mengikuti gambar referensi POPUP.png.
+    """
     @st.dialog("Informasi Polutan", width="large")
     def _popup():
         st.markdown("""
@@ -799,87 +900,99 @@ def render_popup_polutan():
             Penjelasan singkat tiap polutan udara yang dipantau JakU.
         </p>
         """, unsafe_allow_html=True)
+
         items = list(INFO_POLUTAN.items())
         for i in range(0, len(items), 2):
             cols = st.columns(2, gap="medium")
             for j, col in enumerate(cols):
-                if i + j >= len(items): continue
+                if i + j >= len(items):
+                    continue
                 nama, info = items[i + j]
                 with col:
                     st.markdown(f"""
-                    <div style="background:#FFFFFF; border:1px solid #E2E8F0;
-                                border-radius:14px; padding:1rem 1.1rem;
-                                height:100%; min-height:130px;">
-                      <div style="font-weight:700; font-size:1rem; color:#0F172A; margin-bottom:0.45rem;">{nama}</div>
-                      <div style="font-size:0.82rem; color:#475569; line-height:1.5;">{info["deskripsi"]}</div>
+                    <div style="
+                        background:#FFFFFF;
+                        border:1px solid #E2E8F0;
+                        border-radius:14px;
+                        padding:1rem 1.1rem;
+                        height:100%;
+                        min-height:130px;
+                    ">
+                      <div style="font-weight:700; font-size:1rem; color:#0F172A; margin-bottom:0.45rem;">
+                        {nama}
+                      </div>
+                      <div style="font-size:0.82rem; color:#475569; line-height:1.5;">
+                        {info["deskripsi"]}
+                      </div>
                     </div>
                     """, unsafe_allow_html=True)
+
     _popup()
-
-
-def navigate_to(page_name, **extra_state):
-    """Pindah halaman + simpan state tambahan, lalu rerun."""
-    if page_name not in PAGES:
-        return
-    st.session_state.current_page = page_name
-    st.session_state.menu_key = st.session_state.get("menu_key", 0) + 1
-    for k, v in extra_state.items():
-        st.session_state[k] = v
-    st.rerun()
 
 
 # ================================================================
 # SIDEBAR
 # ================================================================
 def render_sidebar():
-    if "current_page" not in st.session_state:
-        st.session_state.current_page = "Dashboard"
-    if "menu_key" not in st.session_state:
-        st.session_state.menu_key = 0
-
-    logo_b64 = get_logo_b64()
-
+    """
+    FIX #4 — Logo lama (file logo.svg) diganti dengan SVG sprout inline.
+    Tidak bergantung file eksternal, ukuran konsisten, warna brand #0A6847.
+    """
     with st.sidebar:
-        if logo_b64:
-            st.markdown(
-                f"""
-                <div class='sidebar-logo'>
-                    <img src='data:image/svg+xml;base64,{logo_b64}' style='width:140px;' />
-                </div>
-                <div class='sidebar-subtitle'>Pantau Udara, Jaga Jakarta</div>
-                """, unsafe_allow_html=True)
-        else:
-            st.markdown(
-                "<h2 style='text-align:center; color:#16A34A; margin-bottom:0;'>Jak<span style='color:#2563EB;'>U</span></h2>"
-                "<div class='sidebar-subtitle'>Pantau Udara, Jaga Jakarta</div>",
-                unsafe_allow_html=True)
+        # Logo sprout + teks "JakU" — sejajar horizontal
+        st.markdown(
+            f"""
+            <div style="display:flex; align-items:center; justify-content:center;
+                        gap:10px; padding:0.5rem 0 0.2rem 0;">
+                {logo_jaku_svg(size=42)}
+                <span style="font-size:1.85rem; font-weight:800; letter-spacing:-0.02em;
+                             line-height:1;">
+                    <span style="color:#0A6847;">Jak</span><span style="color:#2563EB;">U</span>
+                </span>
+            </div>
+            <div class='sidebar-subtitle'>Pantau Udara, Jaga Jakarta</div>
+            """,
+            unsafe_allow_html=True,
+        )
 
+        # Menu utama
         selected = option_menu(
             menu_title=None,
-            options=PAGES,
-            icons=PAGE_ICONS,
-            default_index=PAGES.index(st.session_state.current_page),
-            key=f"main_menu_{st.session_state.menu_key}",
+            options=[
+                "Dashboard",
+                "Detail Wilayah",
+                "Simulasi Prediksi ISPU",
+                "Edukasi & Insight",
+            ],
+            icons=["grid", "geo-alt", "bar-chart", "book"],
+            default_index=0,
             styles={
-                "container": {"padding": "0.25rem 0.5rem", "background-color": "#FFFFFF"},
+                "container": {
+                    "padding": "0.25rem 0.5rem",
+                    "background-color": "#FFFFFF",
+                },
                 "icon": {"font-size": "1.05rem"},
                 "nav-link": {
-                    "font-size": "0.93rem", "font-weight": "500", "color": "#475569",
-                    "padding": "0.72rem 1rem", "margin": "0.2rem 0",
-                    "border-radius": "12px", "--hover-color": "#F1F5F9",
+                    "font-size": "0.92rem",
+                    "font-weight": "500",
+                    "color": "#475569",
+                    "padding": "0.7rem 1rem",
+                    "margin": "0.18rem 0",
+                    "border-radius": "10px",
+                    "--hover-color": "#F1F5F9",
                 },
                 "nav-link-selected": {
-                    "background-color": "#DBEAFE", "color": "#2563EB", "font-weight": "600",
+                    "background-color": "#DBEAFE",
+                    "color": "#2563EB",
+                    "font-weight": "600",
                 },
             },
         )
 
-        # Update state jika user klik menu manual
-        if selected != st.session_state.current_page:
-            st.session_state.current_page = selected
-            st.rerun()
+        # Spacer untuk dorong footer ke bawah
+        st.markdown("<div style='flex:1; min-height:6rem;'></div>", unsafe_allow_html=True)
 
-        st.markdown("<div style='flex:1; min-height:7rem;'></div>", unsafe_allow_html=True)
+        # Footer sidebar
         st.markdown(
             """
             <div class='sidebar-footer'>
@@ -890,276 +1003,349 @@ def render_sidebar():
                 <div class='sidebar-footer-ts-label'>Data terakhir diperbarui</div>
                 <div class='sidebar-footer-ts'>26 Mei 2025, 10:00 WIB</div>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
+
+        return selected
 
 
 # ================================================================
-# HALAMAN 1: DASHBOARD (REDESIGN)
+# ================================================================
+# HALAMAN 1: DASHBOARD (REWRITE TOTAL — FIX #1, #2, #3, #5, #6, #7)
 # ================================================================
 def page_dashboard(data):
-    # ─────────── HEADER ───────────
-    h1, h2 = st.columns([3, 1.1])
-    with h1:
+    """
+    Perubahan dari versi lama:
+    • Setiap "kartu" sekarang dibungkus st.container(border=True), BUKAN
+      pasangan st.markdown("<div class='card'>") + </div>. Sebelumnya
+      pattern itu menghasilkan div kosong (FIX #3) karena tiap st.markdown
+      dibungkus DOM container terpisah oleh Streamlit.
+    • Emoji status → ispu_emoji_svg(kategori) (FIX #5).
+    • Ilustrasi kota → jakarta_skyline_svg() (FIX #6).
+    • Legend peta → render_legend_safe() (FIX #1 + #2).
+    • Tombol "Lihat Selengkapnya" dipindah ke bawah peta+legend dalam
+      kartu yang SAMA (FIX #7).
+    • Zoom peta 10 → 11 supaya fokus ke DKI Jakarta (FIX #7).
+    """
+    # ──────────────────────────── HEADER ────────────────────────────
+    head1, head2 = st.columns([3, 1.1])
+    with head1:
         st.markdown(
             "<div class='page-title'>Halo, Selamat Datang di JakU!</div>"
-            "<div class='page-subtitle'>Berikut ringkasan kualitas udara di Provinsi DKI Jakarta</div>",
+            "<div class='page-subtitle'>Berikut ringkasan kualitas udara di "
+            "Provinsi DKI Jakarta</div>",
             unsafe_allow_html=True,
         )
-    with h2:
+    with head2:
         st.markdown(
-            """
-            <div style='display:flex; justify-content:flex-end; padding-top:0.4rem;'>
-                <div class='updated-card'>
-                    <div class='updated-card-icon'>📅</div>
-                    <div>
-                        <div class='updated-card-label'>Data terakhir diperbarui</div>
-                        <div class='updated-card-value'>15 Juni 2024, 10:00 WIB</div>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    # ─────────── ROW 1: HERO + MAP ───────────
-    row1_left, row1_right = st.columns([1.2, 1], gap="medium")
-
-    # ▸ Hero card
-    with row1_left:
-        ispu_val = 78
-        kat = kategori_dari_ispu(ispu_val)
-        info = KATEGORI_INFO[kat]
-
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='card-title'>Kualitas Udara di Jakarta Hari ini (Rata-rata)</div>",
+            "<div style='display:flex; justify-content:flex-end; padding-top:0.4rem;'>"
+            "<div class='updated-card'>"
+            "<div class='updated-card-label'>📅 Data terakhir diperbarui</div>"
+            "<div class='updated-card-value'>15 Juni 2024, 10:00 WIB</div>"
+            "</div></div>",
             unsafe_allow_html=True,
         )
 
-        # Hero row: angka besar | emoji+status+desc | illustrasi
-        st.markdown(
-            f"""
-            <div class='hero-row'>
-                <div>
-                    <div class='hero-number' style='color:{info["warna"]};'>{ispu_val}</div>
-                    <div class='hero-label'>ISPU</div>
-                </div>
-                <div style='flex:1; padding-top:0.6rem;'>
-                    <div class='hero-emoji'>{info["emoji"]}</div>
-                    <div class='hero-status' style='color:{info["warna"]};'>Udara {kat}</div>
-                    <div class='hero-desc'>{info["deskripsi"]}</div>
-                </div>
-                <div class='hero-illustration'>
-                    <div style='font-size:4.5rem; line-height:1;'>🏙️</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    # ──────────────── ROW 1: HERO ISPU + PETA WILAYAH ────────────────
+    col_left, col_right = st.columns([1.18, 1], gap="medium")
 
-        # Polutan dominan strip + button popup
-        dom_l, dom_r = st.columns([2, 1])
-        with dom_l:
+    # ─── KIRI: Hero ISPU ───
+    with col_left:
+        with st.container(border=True):           # ← FIX #3
+            ispu_avg = 78
+            kat = kategori_dari_ispu(ispu_avg)
+            info = KATEGORI_INFO[kat]
+
             st.markdown(
-                """
-                <div class='dom-strip' style='border-top:none; padding-top:1.2rem; margin-top:1.2rem;'>
-                    <div class='dom-strip-left'>
-                        <span class='dom-strip-icon'>🌿</span>
-                        <span><strong>Polutan dominan:</strong>&nbsp; PM2.5 (24 µg/m³)</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-        with dom_r:
-            st.markdown("<div style='padding-top:1.4rem;'></div>", unsafe_allow_html=True)
-            if st.button("ⓘ  Lihat penjelasan polutan", key="btn_info_dashboard",
-                         use_container_width=True):
-                render_popup_polutan()
-
-        # Pollutant grid (6 polutan compact)
-        st.markdown(
-            """
-            <div style='border-top:1px solid #F1F5F9; margin-top:0.4rem;'></div>
-            <div class='pollutant-grid'>
-              <div class='pollutant-cell'><div class='pollutant-name'>PM2.5</div><div class='pollutant-value'>24</div><div class='pollutant-unit'>µg/m³</div></div>
-              <div class='pollutant-cell'><div class='pollutant-name'>PM10</div><div class='pollutant-value'>41</div><div class='pollutant-unit'>µg/m³</div></div>
-              <div class='pollutant-cell'><div class='pollutant-name'>NO₂</div><div class='pollutant-value'>18</div><div class='pollutant-unit'>µg/m³</div></div>
-              <div class='pollutant-cell'><div class='pollutant-name'>SO₂</div><div class='pollutant-value'>7</div><div class='pollutant-unit'>µg/m³</div></div>
-              <div class='pollutant-cell'><div class='pollutant-name'>CO</div><div class='pollutant-value'>0.6</div><div class='pollutant-unit'>mg/m³</div></div>
-              <div class='pollutant-cell'><div class='pollutant-name'>O₃</div><div class='pollutant-value'>50</div><div class='pollutant-unit'>µg/m³</div></div>
-            </div>
-            """, unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # ▸ Map card
-    with row1_right:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='card-title'>Kualitas Udara per Wilayah di Jakarta</div>",
-            unsafe_allow_html=True,
-        )
-
-        m1, m2 = st.columns([1.85, 1], gap="small")
-        with m1:
-            st.markdown("<div class='map-wrapper'>", unsafe_allow_html=True)
-            m = folium.Map(
-                location=[-6.2088, 106.8456],
-                zoom_start=10,
-                tiles="CartoDB positron",
-                zoom_control=False,
-                scrollWheelZoom=False,
-                dragging=True,
+                "<div class='card-title'>Kualitas Udara di Jakarta Hari ini "
+                "(Rata-rata)</div>",
+                unsafe_allow_html=True,
             )
-            for _, row in data["wilayah"].iterrows():
-                kat_w = row["kategori"]
-                warna = KATEGORI_INFO.get(kat_w, KATEGORI_INFO["Sedang"])["warna"]
-                folium.CircleMarker(
-                    location=[row["lat"], row["lon"]],
-                    radius=24, color="white", weight=3,
-                    fill=True, fillColor=warna, fillOpacity=0.95,
-                    tooltip=f"{row['wilayah']}: {row['ispu']}",
-                ).add_to(m)
-                folium.map.Marker(
-                    [row["lat"], row["lon"]],
-                    icon=folium.DivIcon(
-                        icon_size=(40, 40), icon_anchor=(20, 20),
-                        html=f"<div style='font-size:12px; font-weight:800; color:white; text-align:center; line-height:40px;'>{row['ispu']}</div>",
-                    ),
-                ).add_to(m)
-            st_folium(m, height=300, use_container_width=True, returned_objects=[])
-            st.markdown("</div>", unsafe_allow_html=True)
 
-        with m2:
-            legend_html = "<div class='legend-block'><div class='legend-title'>Keterangan:</div>"
-            for nama, info_kat in KATEGORI_INFO.items():
-                legend_html += f"""
-                <div class='legend-row'>
-                    <div class='legend-dot' style='background:{info_kat["warna"]};'></div>
-                    <span>{nama} ({info_kat["rentang"]})</span>
-                </div>
-                """
-            legend_html += "</div>"
-            st.markdown(legend_html, unsafe_allow_html=True)
+            # Hero: angka ISPU besar | emoji+status+desc | ilustrasi Jakarta
+            # Dibuat sebagai SATU markdown supaya layout terkunci rapi
+            hero_html = (
+                "<div style='display:flex; align-items:flex-start; gap:1.5rem; "
+                "margin-top:0.25rem;'>"
+                # Kolom 1: angka ISPU + label
+                "<div style='flex-shrink:0;'>"
+                f"<div style='font-size:5rem; font-weight:800; line-height:0.95; "
+                f"letter-spacing:-0.05em; color:{info['warna']};'>{ispu_avg}</div>"
+                "<div style='font-size:0.92rem; font-weight:600; color:#64748B; "
+                "margin-top:0.3rem;'>ISPU</div>"
+                "</div>"
+                # Kolom 2: emoji SVG + status + deskripsi
+                "<div style='flex:1; padding-top:0.4rem;'>"
+                f"<div style='margin-bottom:0.5rem;'>{ispu_emoji_svg(kat, size=56)}</div>"
+                f"<div style='font-size:1.4rem; font-weight:700; color:{info['warna']}; "
+                "margin-bottom:0.35rem;'>"
+                f"Udara {kat}</div>"
+                f"<div style='font-size:0.86rem; color:#475569; line-height:1.55; "
+                f"max-width:22rem;'>{info['deskripsi']}</div>"
+                "</div>"
+                # Kolom 3: ilustrasi Jakarta
+                "<div style='margin-left:auto; padding-top:0.2rem;'>"
+                f"{jakarta_skyline_svg(width=170)}"
+                "<div style='text-align:center; font-size:0.8rem; color:#64748B; "
+                "font-weight:500; margin-top:0.3rem;'>DKI Jakarta</div>"
+                "</div>"
+                "</div>"
+            )
+            st.markdown(hero_html, unsafe_allow_html=True)
 
-            st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
-            if st.button("Lihat Selengkapnya  →", key="btn_lihat_selengkapnya",
-                         type="primary", use_container_width=True):
-                navigate_to("Detail Wilayah")
+            # Polutan dominan + tombol popup
+            pdc1, pdc2 = st.columns([2, 1])
+            with pdc1:
+                st.markdown(
+                    "<div style='display:flex; align-items:center; gap:0.5rem; "
+                    "padding-top:1.3rem; margin-top:1.2rem; "
+                    "border-top:1px solid #F1F5F9; font-size:0.92rem; color:#0F172A;'>"
+                    "<span style='color:#16A34A; font-size:1.05rem;'>🌿</span>"
+                    "<span><strong>Polutan dominan:</strong>&nbsp; "
+                    "PM2.5 (24 µg/m³)</span>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            with pdc2:
+                st.markdown(
+                    "<div style='padding-top:1.4rem;'></div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("ⓘ  Lihat penjelasan polutan",
+                             key="btn_info_dashboard",
+                             use_container_width=True):
+                    render_popup_polutan()
 
-        st.markdown("</div>", unsafe_allow_html=True)
+            # 6 polutan compact — SATU markdown call
+            st.markdown(
+                "<div class='pollutant-grid'>"
+                "<div class='pollutant-cell'><div class='pollutant-name'>PM2.5</div>"
+                "<div class='pollutant-value'>24</div>"
+                "<div class='pollutant-unit'>µg/m³</div></div>"
+                "<div class='pollutant-cell'><div class='pollutant-name'>PM10</div>"
+                "<div class='pollutant-value'>41</div>"
+                "<div class='pollutant-unit'>µg/m³</div></div>"
+                "<div class='pollutant-cell'><div class='pollutant-name'>NO₂</div>"
+                "<div class='pollutant-value'>18</div>"
+                "<div class='pollutant-unit'>µg/m³</div></div>"
+                "<div class='pollutant-cell'><div class='pollutant-name'>SO₂</div>"
+                "<div class='pollutant-value'>7</div>"
+                "<div class='pollutant-unit'>µg/m³</div></div>"
+                "<div class='pollutant-cell'><div class='pollutant-name'>CO</div>"
+                "<div class='pollutant-value'>0.6</div>"
+                "<div class='pollutant-unit'>mg/m³</div></div>"
+                "<div class='pollutant-cell'><div class='pollutant-name'>O₃</div>"
+                "<div class='pollutant-value'>50</div>"
+                "<div class='pollutant-unit'>µg/m³</div></div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
-    # ─────────── ROW 2: PREDIKSI + TREN ───────────
+    # ─── KANAN: Peta wilayah + legend + tombol ───
+    with col_right:
+        with st.container(border=True):           # ← FIX #3
+            st.markdown(
+                "<div class='card-title'>Kualitas Udara per Wilayah di Jakarta</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Peta + legend side-by-side
+            mc1, mc2 = st.columns([1.9, 1], gap="small")
+            with mc1:
+                # FIX #7 — zoom 10 → 11, fokus ke DKI Jakarta saja
+                m = folium.Map(
+                    location=[-6.2088, 106.8456],
+                    zoom_start=11,
+                    tiles="CartoDB positron",
+                    zoom_control=False,
+                    scrollWheelZoom=False,
+                    dragging=True,
+                )
+                # Batas tampilan supaya tidak terlalu zoom-out ke Tangerang/Bekasi
+                m.fit_bounds([[-6.37, 106.69], [-6.08, 107.00]])
+                for _, row in data["wilayah"].iterrows():
+                    kat_w = row["kategori"]
+                    warna = KATEGORI_INFO.get(
+                        kat_w, KATEGORI_INFO["Sedang"]
+                    )["warna"]
+                    folium.CircleMarker(
+                        location=[row["lat"], row["lon"]],
+                        radius=24,
+                        color="white",
+                        weight=3,
+                        fill=True,
+                        fillColor=warna,
+                        fillOpacity=0.95,
+                        tooltip=f"{row['wilayah']}: {row['ispu']}",
+                    ).add_to(m)
+                    folium.map.Marker(
+                        [row["lat"], row["lon"]],
+                        icon=folium.DivIcon(
+                            icon_size=(40, 40),
+                            icon_anchor=(20, 20),
+                            html=(
+                                "<div style='font-size:12px; font-weight:800; "
+                                "color:white; text-align:center; "
+                                f"line-height:40px;'>{row['ispu']}</div>"
+                            ),
+                        ),
+                    ).add_to(m)
+                st_folium(m, height=290, use_container_width=True,
+                          returned_objects=[])
+
+            with mc2:
+                # FIX #1 + #2 — legend reliable via render_legend_safe
+                render_legend_safe(KATEGORI_INFO)
+
+            # Tombol "Lihat Selengkapnya" — di bawah, masih dalam kartu peta
+            # (FIX #7 — sebelumnya tombol terpisah jauh dari peta)
+            st.markdown(
+                "<div style='margin-top:0.8rem;'></div>",
+                unsafe_allow_html=True,
+            )
+            _spacer, btn_col = st.columns([2, 1])
+            with btn_col:
+                if st.button("Lihat Selengkapnya  →",
+                             key="btn_selengkapnya",
+                             type="primary",
+                             use_container_width=True):
+                    st.session_state["jump_to_detail"] = True
+                    st.rerun()
+
+    # ──────────────── ROW 2: PREDIKSI + TREN ────────────────
     st.markdown("<div style='margin-top:1.25rem;'></div>", unsafe_allow_html=True)
-    row2_left, row2_right = st.columns([1, 1.5], gap="medium")
+    pcol1, pcol2 = st.columns([1, 1.4], gap="medium")
 
-    # ▸ Prediksi 7 hari
-    with row2_left:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='card-title'>Prediksi ISPU di Jakarta (7 Hari Mendatang)</div>",
-            unsafe_allow_html=True,
-        )
-        pred = data["prediksi"][data["prediksi"]["wilayah"] == "DKI Jakarta"]
-        rows_html = ""
-        for _, r in pred.iterrows():
-            kat2 = r["kategori"]
-            warna = KATEGORI_INFO.get(kat2, KATEGORI_INFO["Sedang"])["warna"]
-            tgl = pd.to_datetime(r["tanggal"]).strftime("%d %b %Y")
-            rows_html += f"""
-            <div class='pred-row'>
-                <div class='pred-date'>{tgl}</div>
-                <div><span class='pred-pill' style='background:{warna};'>{r["ispu"]}</span></div>
-                <div class='pred-cat' style='color:{warna};'>{kat2}</div>
-                <div class='pred-pm'>{r["pm25"]} µg/m³</div>
-            </div>
-            """
-        st.markdown(rows_html, unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    # ─── Prediksi 7 hari mendatang ───
+    with pcol1:
+        with st.container(border=True):           # ← FIX #3
+            st.markdown(
+                "<div class='card-title'>Prediksi ISPU di Jakarta "
+                "(7 Hari Mendatang)</div>",
+                unsafe_allow_html=True,
+            )
+            pred_dki = data["prediksi"][data["prediksi"]["wilayah"] == "DKI Jakarta"]
+            rows_html = ""
+            for _, r in pred_dki.iterrows():
+                kat2 = r["kategori"]
+                warna = KATEGORI_INFO.get(
+                    kat2, KATEGORI_INFO["Sedang"]
+                )["warna"]
+                tanggal = pd.to_datetime(r["tanggal"]).strftime("%d %b %Y")
+                rows_html += (
+                    "<div class='pred-row'>"
+                    f"<div class='pred-date'>{tanggal}</div>"
+                    "<div>"
+                    f"<span class='pred-pill' style='background:{warna};'>"
+                    f"{r['ispu']}</span>"
+                    "</div>"
+                    f"<div class='pred-cat' style='color:{warna};'>{kat2}</div>"
+                    f"<div class='pred-pm'>{r['pm25']} µg/m³</div>"
+                    "</div>"
+                )
+            st.markdown(rows_html, unsafe_allow_html=True)
 
-    # ▸ Tren chart 7 hari terakhir
-    with row2_right:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='card-title'>Tren ISPU di Jakarta (7 Hari Terakhir)</div>",
-            unsafe_allow_html=True,
-        )
-
-        df = data["ispu"].copy()
-        df["tanggal"] = pd.to_datetime(df["tanggal"])
-        df["label_x"] = df["tanggal"].dt.strftime("%d %b")
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df["label_x"], y=df["ispu"],
-            mode="lines+markers+text",
-            text=df["ispu"], textposition="top center",
-            textfont=dict(size=11, color="#0F172A", weight=600),
-            line=dict(color="#2563EB", width=3, shape="spline", smoothing=1.0),
-            marker=dict(size=9, color="#2563EB", line=dict(color="white", width=2)),
-            fill="tozeroy", fillcolor="rgba(37, 99, 235, 0.08)",
-            hovertemplate="<b>%{x}</b><br>ISPU: %{y}<extra></extra>",
-            showlegend=False,
-        ))
-        for nilai, label, warna in [
-            (50, "Baik", "#16A34A"),
-            (100, "Sedang", "#2563EB"),
-            (200, "Tidak Sehat", "#F59E0B"),
-            (300, "Sangat Tidak Sehat", "#EF4444"),
-        ]:
-            fig.add_hline(y=nilai, line_dash="dot", line_color="#E2E8F0", line_width=1)
-            fig.add_annotation(
-                x=1.0, xref="paper", y=nilai, text=label, showarrow=False,
-                xanchor="left", yanchor="middle",
-                font=dict(size=10, color=warna, weight=600), xshift=8,
+    # ─── Tren 7 hari terakhir (chart) ───
+    with pcol2:
+        with st.container(border=True):           # ← FIX #3
+            st.markdown(
+                "<div class='card-title'>Tren ISPU di Jakarta (7 Hari Terakhir)</div>",
+                unsafe_allow_html=True,
             )
 
-        fig.update_layout(
-            height=320,
-            margin=dict(l=20, r=130, t=20, b=20),
-            paper_bgcolor="white", plot_bgcolor="white",
-            xaxis=dict(showgrid=False, showline=False, tickfont=dict(size=11, color="#64748B")),
-            yaxis=dict(
-                range=[0, 310], gridcolor="#F1F5F9", showline=False,
-                tickfont=dict(size=11, color="#94A3B8"),
-                tickvals=[0, 50, 100, 150, 200, 300],
-            ),
-            hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0",
-                            font=dict(size=12, color="#0F172A", family="Plus Jakarta Sans")),
-        )
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+            df_tren = data["ispu"].copy()
+            df_tren["tanggal"] = pd.to_datetime(df_tren["tanggal"])
+            df_tren["label_x"] = df_tren["tanggal"].dt.strftime("%d %b")
 
-    # ─────────── INFO BOX ML ───────────
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_tren["label_x"], y=df_tren["ispu"],
+                mode="lines+markers+text",
+                text=df_tren["ispu"],
+                textposition="top center",
+                textfont=dict(size=11, color="#0F172A", weight=600),
+                line=dict(color="#2563EB", width=3,
+                          shape="spline", smoothing=1.0),
+                marker=dict(size=9, color="#2563EB",
+                            line=dict(color="white", width=2)),
+                fill="tozeroy",
+                fillcolor="rgba(37, 99, 235, 0.08)",
+                hovertemplate="<b>%{x}</b><br>ISPU: %{y}<extra></extra>",
+                showlegend=False,
+            ))
+            for nilai, label, warna in [
+                (50, "Baik", "#16A34A"),
+                (100, "Sedang", "#2563EB"),
+                (200, "Tidak Sehat", "#F59E0B"),
+                (300, "Sangat Tidak Sehat", "#EF4444"),
+            ]:
+                fig.add_hline(y=nilai, line_dash="dot",
+                              line_color="#E2E8F0", line_width=1)
+                fig.add_annotation(
+                    x=1.0, xref="paper", y=nilai,
+                    text=label, showarrow=False,
+                    xanchor="left", yanchor="middle",
+                    font=dict(size=10, color=warna, weight=600),
+                    xshift=8,
+                )
+            fig.update_layout(
+                height=320,
+                margin=dict(l=20, r=130, t=20, b=20),
+                paper_bgcolor="white", plot_bgcolor="white",
+                xaxis=dict(showgrid=False, showline=False,
+                           tickfont=dict(size=11, color="#64748B")),
+                yaxis=dict(
+                    range=[0, 310], gridcolor="#F1F5F9", showline=False,
+                    tickfont=dict(size=11, color="#94A3B8"),
+                    tickvals=[0, 50, 100, 150, 200, 300],
+                ),
+            )
+            st.plotly_chart(fig, use_container_width=True,
+                            config={"displayModeBar": False})
+
+    # ──────────────── INFO BOX ML ────────────────
     st.markdown(
-        """
-        <div class='info-box'>
-            <div class='info-box-icon'>ⓘ</div>
-            <div class='info-box-text'>
-                Prediksi ini dibuat menggunakan model machine learning <strong>XGBoost</strong>
-                berdasarkan data historis ISPU pada tahun 2024.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        "<div class='info-box'>"
+        "<div class='info-box-icon'>ⓘ</div>"
+        "<div class='info-box-text'>"
+        "Prediksi ini dibuat menggunakan model machine learning "
+        "<strong>XGBoost</strong> berdasarkan data historis ISPU pada tahun 2024."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
 
-    # ─────────── ROW 3: REKOMENDASI ───────────
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>Rekomendasi Aktivitas</div>", unsafe_allow_html=True)
+    # ──────────────── REKOMENDASI AKTIVITAS ────────────────
+    st.markdown("<div style='margin-top:0.5rem;'></div>", unsafe_allow_html=True)
+    with st.container(border=True):               # ← FIX #3
+        st.markdown(
+            "<div class='card-title'>Rekomendasi Aktivitas</div>",
+            unsafe_allow_html=True,
+        )
+        rekomendasi = [
+            ("🏃‍♀️", "Olahraga Luar Ruangan",
+             "Aktivitas luar ruangan aman dilakukan."),
+            ("😷",   "Gunakan Masker",
+             "Gunakan masker jika Anda sensitif terhadap polusi."),
+            ("👵",   "Kelompok Sensitif",
+             "Jaga kesehatan dan hindari area dengan polusi tinggi."),
+            ("🌳",   "Buka Jendela",
+             "Sirkulasi udara di dalam ruangan masih aman."),
+        ]
+        rc = st.columns(4, gap="medium")
+        for col, (icon, judul, desc) in zip(rc, rekomendasi):
+            with col:
+                st.markdown(
+                    "<div class='rekom-card'>"
+                    f"<div class='rekom-icon'>{icon}</div>"
+                    "<div>"
+                    f"<div class='rekom-title'>{judul}</div>"
+                    f"<div class='rekom-desc'>{desc}</div>"
+                    "</div></div>",
+                    unsafe_allow_html=True,
+                )
 
-    rekomendasi = [
-        ("🏃‍♀️", "Olahraga Luar Ruangan", "Aktivitas luar ruangan aman dilakukan."),
-        ("😷",   "Gunakan Masker",         "Gunakan masker jika Anda sensitif terhadap polusi."),
-        ("👵",   "Kelompok Sensitif",      "Jaga kesehatan dan hindari area dengan polusi tinggi."),
-        ("🌳",   "Buka Jendela",           "Sirkulasi udara di dalam ruangan masih aman."),
-    ]
-    rc = st.columns(4, gap="medium")
-    for col, (icon, judul, desc) in zip(rc, rekomendasi):
-        with col:
-            st.markdown(
-                f"""
-                <div class='rekom-card'>
-                    <div class='rekom-icon'>{icon}</div>
-                    <div>
-                        <div class='rekom-title'>{judul}</div>
-                        <div class='rekom-desc'>{desc}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 # ================================================================
@@ -1172,24 +1358,20 @@ def page_detail_wilayah(data):
         unsafe_allow_html=True,
     )
 
+    # Tabs wilayah
     wilayah_list = data["wilayah"]["wilayah"].tolist()
-
-    # Default tab dari session_state (jika datang dari "Lihat Selengkapnya")
-    default_idx = 0
-    if "selected_region" in st.session_state and st.session_state.selected_region in wilayah_list:
-        default_idx = wilayah_list.index(st.session_state.selected_region)
-        # Reset agar tidak sticky
-        del st.session_state["selected_region"]
-
     tabs = st.tabs(wilayah_list)
+
     for tab, wilayah in zip(tabs, wilayah_list):
         with tab:
             row = data["wilayah"][data["wilayah"]["wilayah"] == wilayah].iloc[0]
             kat = row["kategori"]
             info = KATEGORI_INFO[kat]
 
+            # Kualitas udara + Rekomendasi
             c1, c2 = st.columns([1.1, 1], gap="medium")
 
+            # ---- Card kualitas udara
             with c1:
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
                 st.markdown(
@@ -1198,36 +1380,36 @@ def page_detail_wilayah(data):
                 )
                 st.markdown(
                     f"""
-                    <div class='hero-row'>
+                    <div class='ispu-hero'>
                         <div>
-                            <div class='hero-number' style='color:{info["warna"]}; font-size:4.5rem;'>{row["ispu"]}</div>
-                            <div class='hero-label'>ISPU</div>
+                            <div class='ispu-number' style='color:{info["warna"]};'>{row["ispu"]}</div>
+                            <div class='ispu-label'>ISPU</div>
                         </div>
-                        <div style='flex:1; padding-top:0.6rem;'>
-                            <div class='hero-emoji'>{info["emoji"]}</div>
-                            <div class='hero-status' style='color:{info["warna"]};'>Udara {kat}</div>
-                            <div class='hero-desc'>{info["deskripsi"]}</div>
+                        <div>
+                            <div class='ispu-emoji'>{info["emoji"]}</div>
+                            <div class='ispu-status' style='color:{info["warna"]};'>Udara {kat}</div>
+                            <div class='ispu-desc'>{info["deskripsi"]}</div>
                         </div>
                     </div>
-                    """, unsafe_allow_html=True,
+                    """,
+                    unsafe_allow_html=True,
                 )
 
-                dl, dr = st.columns([2, 1])
-                with dl:
+                pdc1, pdc2 = st.columns([2, 1])
+                with pdc1:
                     st.markdown(
                         f"""
-                        <div class='dom-strip' style='margin-top:1.2rem;'>
-                            <div class='dom-strip-left'>
-                                <span class='dom-strip-icon'>🌿</span>
-                                <span><strong>Polutan dominan:</strong>&nbsp; PM2.5 ({row["pm25"]} µg/m³)</span>
+                        <div class='polutan-dominan-row' style='border-top:1px solid #F1F5F9; padding-top:1rem; margin-top:1.2rem;'>
+                            <div class='polutan-dominan-text'>
+                                🌿 <strong>Polutan dominan:</strong> PM2.5 ({row["pm25"]} µg/m³)
                             </div>
                         </div>
-                        """, unsafe_allow_html=True,
+                        """,
+                        unsafe_allow_html=True,
                     )
-                with dr:
-                    st.markdown("<div style='padding-top:1.4rem;'></div>", unsafe_allow_html=True)
-                    if st.button("ⓘ  Lihat penjelasan polutan", key=f"btn_info_{wilayah}",
-                                 use_container_width=True):
+                with pdc2:
+                    st.markdown("<div style='padding-top:1.2rem;'></div>", unsafe_allow_html=True)
+                    if st.button("ⓘ Lihat penjelasan polutan", key=f"btn_info_{wilayah}", use_container_width=True):
                         render_popup_polutan()
 
                 st.markdown(
@@ -1240,21 +1422,24 @@ def page_detail_wilayah(data):
                       <div class='pollutant-cell'><div class='pollutant-name'>CO</div><div class='pollutant-value'>{row["co"]}</div><div class='pollutant-unit'>mg/m³</div></div>
                       <div class='pollutant-cell'><div class='pollutant-name'>O₃</div><div class='pollutant-value'>{row["o3"]}</div><div class='pollutant-unit'>µg/m³</div></div>
                     </div>
-                    """, unsafe_allow_html=True,
+                    """,
+                    unsafe_allow_html=True,
                 )
                 st.markdown("</div>", unsafe_allow_html=True)
 
+            # ---- Rekomendasi aktivitas (4 item dalam 2x2 grid)
             with c2:
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
                 st.markdown("<div class='card-title'>Rekomendasi Aktivitas</div>", unsafe_allow_html=True)
-                rekom = [
+
+                rekomendasi = [
                     ("🏃‍♀️", "Olahraga Luar Ruangan", "Aktivitas luar ruangan aman dilakukan."),
                     ("😷",   "Gunakan Masker",         "Gunakan masker jika Anda sensitif terhadap polusi."),
                     ("👵",   "Kelompok Sensitif",      "Jaga kesehatan dan hindari area dengan polusi tinggi."),
                     ("🌳",   "Buka Jendela",           "Sirkulasi udara di dalam ruangan masih aman."),
                 ]
                 gc1, gc2 = st.columns(2, gap="small")
-                for idx, (icon, judul, desc) in enumerate(rekom):
+                for idx, (icon, judul, desc) in enumerate(rekomendasi):
                     with (gc1 if idx % 2 == 0 else gc2):
                         st.markdown(
                             f"""
@@ -1265,13 +1450,17 @@ def page_detail_wilayah(data):
                                     <div class='rekom-desc'>{desc}</div>
                                 </div>
                             </div>
-                            """, unsafe_allow_html=True,
+                            """,
+                            unsafe_allow_html=True,
                         )
                 st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("<div style='margin-top:1.2rem;'></div>", unsafe_allow_html=True)
+
+            # Prediksi + Tren
             pc1, pc2 = st.columns([1, 1.4], gap="medium")
 
+            # Prediksi 7 hari
             with pc1:
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
                 st.markdown(
@@ -1283,10 +1472,10 @@ def page_detail_wilayah(data):
                 for _, r in pred_w.iterrows():
                     kat2 = r["kategori"]
                     warna = KATEGORI_INFO.get(kat2, KATEGORI_INFO["Sedang"])["warna"]
-                    tgl = pd.to_datetime(r["tanggal"]).strftime("%d %b %Y")
+                    tanggal = pd.to_datetime(r["tanggal"]).strftime("%d %b %Y")
                     rows_html += f"""
                     <div class='pred-row'>
-                        <div class='pred-date'>{tgl}</div>
+                        <div class='pred-date'>{tanggal}</div>
                         <div><span class='pred-pill' style='background:{warna};'>{r["ispu"]}</span></div>
                         <div class='pred-cat' style='color:{warna};'>{kat2}</div>
                         <div class='pred-pm'>{r["pm25"]} µg/m³</div>
@@ -1295,52 +1484,67 @@ def page_detail_wilayah(data):
                 st.markdown(rows_html, unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
 
+            # Tren 7 hari (data dummy diolah per wilayah)
             with pc2:
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
                 st.markdown(
                     f"<div class='card-title'>Tren ISPU di {wilayah} (7 Hari Terakhir)</div>",
                     unsafe_allow_html=True,
                 )
-                df = data["ispu"].copy()
-                df["tanggal"] = pd.to_datetime(df["tanggal"])
+
+                df_tren = data["ispu"].copy()
+                df_tren["tanggal"] = pd.to_datetime(df_tren["tanggal"])
+                # Tambahkan variasi kecil per wilayah agar tidak monoton
                 np.random.seed(hash(wilayah) % 1000)
-                df["ispu_w"] = (df["ispu"] + np.random.uniform(-15, 15, len(df))).clip(20, 250).round().astype(int)
-                df["label_x"] = df["tanggal"].dt.strftime("%d %b")
+                offset = np.random.uniform(-15, 15, len(df_tren))
+                df_tren["ispu_w"] = (df_tren["ispu"] + offset).clip(20, 250).round().astype(int)
+                df_tren["label_x"] = df_tren["tanggal"].dt.strftime("%d %b")
 
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(
-                    x=df["label_x"], y=df["ispu_w"],
+                    x=df_tren["label_x"], y=df_tren["ispu_w"],
                     mode="lines+markers+text",
-                    text=df["ispu_w"], textposition="top center",
+                    text=df_tren["ispu_w"],
+                    textposition="top center",
                     textfont=dict(size=11, color="#0F172A", weight=600),
                     line=dict(color="#2563EB", width=3, shape="spline", smoothing=1.0),
-                    marker=dict(size=9, color="#2563EB", line=dict(color="white", width=2)),
-                    fill="tozeroy", fillcolor="rgba(37, 99, 235, 0.08)",
+                    marker=dict(size=8, color="#2563EB", line=dict(color="white", width=2)),
+                    fill="tozeroy",
+                    fillcolor="rgba(37, 99, 235, 0.08)",
                     hovertemplate="<b>%{x}</b><br>ISPU: %{y}<extra></extra>",
                     showlegend=False,
                 ))
                 for nilai, label, warna in [
-                    (50, "Baik", "#16A34A"), (100, "Sedang", "#2563EB"),
-                    (200, "Tidak Sehat", "#F59E0B"), (300, "Sangat Tidak Sehat", "#EF4444"),
+                    (50, "Baik", "#16A34A"),
+                    (100, "Sedang", "#2563EB"),
+                    (200, "Tidak Sehat", "#F59E0B"),
+                    (300, "Sangat Tidak Sehat", "#EF4444"),
                 ]:
-                    fig.add_hline(y=nilai, line_dash="dot", line_color="#E2E8F0", line_width=1)
                     fig.add_annotation(
-                        x=1.0, xref="paper", y=nilai, text=label, showarrow=False,
+                        x=1.0, xref="paper", y=nilai,
+                        text=label, showarrow=False,
                         xanchor="left", yanchor="middle",
-                        font=dict(size=10, color=warna, weight=600), xshift=8,
+                        font=dict(size=10, color=warna, weight=600),
+                        xshift=8,
                     )
                 fig.update_layout(
                     height=300,
-                    margin=dict(l=20, r=130, t=20, b=20),
-                    paper_bgcolor="white", plot_bgcolor="white",
+                    margin=dict(l=20, r=120, t=20, b=20),
+                    paper_bgcolor="white",
+                    plot_bgcolor="white",
                     xaxis=dict(showgrid=False, showline=False, tickfont=dict(size=11, color="#64748B")),
-                    yaxis=dict(range=[0, 310], gridcolor="#F1F5F9", showline=False,
-                               tickfont=dict(size=11, color="#94A3B8"),
-                               tickvals=[0, 50, 100, 150, 200, 300]),
+                    yaxis=dict(
+                        range=[0, 310],
+                        gridcolor="#F1F5F9",
+                        showline=False,
+                        tickfont=dict(size=11, color="#94A3B8"),
+                        tickvals=[0, 50, 100, 150, 200, 300],
+                    ),
                 )
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
                 st.markdown("</div>", unsafe_allow_html=True)
 
+            # Info box ML
             st.markdown(
                 """
                 <div class='info-box'>
@@ -1350,11 +1554,13 @@ def page_detail_wilayah(data):
                         berdasarkan data historis ISPU pada tahun 2024.
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 # ================================================================
-# HALAMAN 3: SIMULASI
+# HALAMAN 3: SIMULASI PREDIKSI ISPU
 # ================================================================
 def page_simulasi(data):
     st.markdown(
@@ -1363,33 +1569,48 @@ def page_simulasi(data):
         unsafe_allow_html=True,
     )
 
+    # Banner panduan
     st.markdown(
         """
         <div class='step-bar'>
             <div class='step-title'>ⓘ Cara Menggunakan Simulasi</div>
-            <div class='step-item'><div class='step-num'>1</div><div class='step-text'>Masukkan nilai konsentrasi 6 polutan sesuai satuan yang tertera.</div></div>
-            <div class='step-item'><div class='step-num'>2</div><div class='step-text'>Klik tombol "Submit Simulasi" untuk melihat hasil prediksi.</div></div>
-            <div class='step-item'><div class='step-num'>3</div><div class='step-text'>Hasil prediksi menunjukkan kategori ISPU dan rekomendasi kesehatan.</div></div>
+            <div class='step-item'>
+                <div class='step-num'>1</div>
+                <div class='step-text'>Masukkan nilai konsentrasi 6 polutan sesuai satuan yang tertera.</div>
+            </div>
+            <div class='step-item'>
+                <div class='step-num'>2</div>
+                <div class='step-text'>Klik tombol "Submit Simulasi" untuk melihat hasil prediksi.</div>
+            </div>
+            <div class='step-item'>
+                <div class='step-num'>3</div>
+                <div class='step-text'>Hasil prediksi menunjukkan kategori ISPU dan rekomendasi kesehatan.</div>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
+    # Initialize state
     if "sim_values" not in st.session_state:
-        st.session_state["sim_values"] = {"pm25": 50.0, "pm10": 70.0, "no2": 25.0,
-                                          "so2": 35.0, "co": 1.5, "o3": 50.0}
+        st.session_state["sim_values"] = {"pm25": 50.0, "pm10": 70.0, "no2": 25.0, "so2": 35.0, "co": 1.5, "o3": 50.0}
     if "sim_hasil" not in st.session_state:
         st.session_state["sim_hasil"] = None
 
+    # Preset handler
     def apply_preset(name):
-        presets = {
-            "Udara Bersih": {"pm25": 8.0, "pm10": 25.0, "no2": 15.0, "so2": 10.0, "co": 0.3, "o3": 30.0},
-            "Udara Sedang": {"pm25": 30.0, "pm10": 70.0, "no2": 25.0, "so2": 35.0, "co": 1.5, "o3": 60.0},
-            "Udara Kurang Baik": {"pm25": 80.0, "pm10": 180.0, "no2": 180.0, "so2": 220.0, "co": 10.0, "o3": 250.0},
-        }
-        st.session_state["sim_values"] = presets[name]
+        if name == "Udara Bersih":
+            st.session_state["sim_values"] = {"pm25": 8.0, "pm10": 25.0, "no2": 15.0, "so2": 10.0, "co": 0.3, "o3": 30.0}
+        elif name == "Udara Sedang":
+            st.session_state["sim_values"] = {"pm25": 30.0, "pm10": 70.0, "no2": 25.0, "so2": 35.0, "co": 1.5, "o3": 60.0}
+        elif name == "Udara Kurang Baik":
+            st.session_state["sim_values"] = {"pm25": 80.0, "pm10": 180.0, "no2": 180.0, "so2": 220.0, "co": 10.0, "o3": 250.0}
         st.session_state["sim_hasil"] = None
 
+    # Layout: kiri = form polutan, kanan = hasil
     col_left, col_right = st.columns([1.05, 1], gap="medium")
 
+    # ---- KIRI: Form polutan
     with col_left:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         head = st.columns([5, 1])
@@ -1398,15 +1619,17 @@ def page_simulasi(data):
                 "<div class='card-title' style='margin-bottom:0.3rem;'>Komposisi Polutan</div>"
                 "<div style='font-size:0.85rem; color:#64748B; line-height:1.5; margin-bottom:1rem;'>"
                 "Sesuaikan slider di bawah untuk mensimulasikan kondisi polutan dan memprediksi "
-                "Indeks Standar Pencemar Udara (ISPU).</div>",
-                unsafe_allow_html=True)
+                "Indeks Standar Pencemar Udara (ISPU)."
+                "</div>",
+                unsafe_allow_html=True,
+            )
         with head[1]:
             st.markdown("<div style='padding-top:0.3rem;'></div>", unsafe_allow_html=True)
             if st.button("ⓘ Info", key="btn_info_simulasi", use_container_width=True):
                 render_popup_polutan()
 
-        st.markdown("<div style='margin-bottom:0.5rem; font-size:0.85rem; color:#475569; font-weight:600;'>Preset</div>",
-                    unsafe_allow_html=True)
+        # Preset buttons
+        st.markdown("<div style='margin-bottom:0.5rem; font-size:0.85rem; color:#475569; font-weight:600;'>Preset</div>", unsafe_allow_html=True)
         pc = st.columns(3, gap="small")
         with pc[0]:
             if st.button("Udara Bersih", key="preset_bersih", use_container_width=True):
@@ -1420,36 +1643,93 @@ def page_simulasi(data):
 
         st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
 
+        # Sliders 6 polutan dalam 2 kolom
         sc1, sc2 = st.columns(2, gap="medium")
         vals = st.session_state["sim_values"]
 
-        def slider_block(col, key_state, label, info_key, vmin, vmax, step, unit):
-            with col:
-                st.markdown(
-                    f"<div style='display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#0F172A; margin-bottom:0.1rem;'>"
-                    f"<span style='width:0.7rem; height:0.7rem; border-radius:999px; background:{INFO_POLUTAN[info_key]['warna']};'></span>"
-                    f"{label}</div>"
-                    f"<div style='font-size:0.78rem; color:#64748B; margin-bottom:0.3rem;'>"
-                    f"{INFO_POLUTAN[info_key]['deskripsi_pendek']}</div>",
-                    unsafe_allow_html=True)
-                vals[key_state] = st.slider(label, vmin, vmax, vals[key_state], step,
-                                             key=f"sl_{key_state}", label_visibility="collapsed")
-                st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:#64748B;'>{vals[key_state]:.2f} ({unit})</div>",
-                            unsafe_allow_html=True)
+        with sc1:
+            st.markdown(
+                f"<div style='display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#0F172A; margin-bottom:0.1rem;'>"
+                f"<span style='width:0.7rem; height:0.7rem; border-radius:999px; background:{INFO_POLUTAN['PM2.5']['warna']};'></span>"
+                f"PM2.5</div>"
+                f"<div style='font-size:0.78rem; color:#64748B; margin-bottom:0.3rem;'>"
+                f"{INFO_POLUTAN['PM2.5']['deskripsi_pendek']}</div>",
+                unsafe_allow_html=True,
+            )
+            vals["pm25"] = st.slider("PM2.5", 0.0, 200.0, vals["pm25"], 0.5,
+                                     key="sl_pm25", label_visibility="collapsed")
+            st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:#64748B;'>{vals['pm25']:.2f} (µg/m³)</div>",
+                        unsafe_allow_html=True)
 
-        slider_block(sc1, "pm25", "PM2.5", "PM2.5", 0.0, 200.0, 0.5, "µg/m³")
-        slider_block(sc2, "pm10", "PM10",  "PM10",  0.0, 300.0, 0.5, "µg/m³")
-        st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
-        sc1, sc2 = st.columns(2, gap="medium")
-        slider_block(sc1, "no2", "NO₂", "NO₂", 0.0, 200.0, 0.5, "µg/m³")
-        slider_block(sc2, "so2", "SO₂", "SO₂", 0.0, 200.0, 0.5, "µg/m³")
-        st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
-        sc1, sc2 = st.columns(2, gap="medium")
-        slider_block(sc1, "co", "CO", "CO", 0.0, 50.0, 0.1, "mg/m³")
-        slider_block(sc2, "o3", "O₃", "O₃", 0.0, 300.0, 0.5, "µg/m³")
+            st.markdown(
+                f"<div style='display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#0F172A; margin-top:1rem; margin-bottom:0.1rem;'>"
+                f"<span style='width:0.7rem; height:0.7rem; border-radius:999px; background:{INFO_POLUTAN['NO₂']['warna']};'></span>"
+                f"NO₂</div>"
+                f"<div style='font-size:0.78rem; color:#64748B; margin-bottom:0.3rem;'>"
+                f"{INFO_POLUTAN['NO₂']['deskripsi_pendek']}</div>",
+                unsafe_allow_html=True,
+            )
+            vals["no2"] = st.slider("NO₂", 0.0, 200.0, vals["no2"], 0.5,
+                                    key="sl_no2", label_visibility="collapsed")
+            st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:#64748B;'>{vals['no2']:.2f} (µg/m³)</div>",
+                        unsafe_allow_html=True)
 
+            st.markdown(
+                f"<div style='display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#0F172A; margin-top:1rem; margin-bottom:0.1rem;'>"
+                f"<span style='width:0.7rem; height:0.7rem; border-radius:999px; background:{INFO_POLUTAN['CO']['warna']};'></span>"
+                f"CO</div>"
+                f"<div style='font-size:0.78rem; color:#64748B; margin-bottom:0.3rem;'>"
+                f"{INFO_POLUTAN['CO']['deskripsi_pendek']}</div>",
+                unsafe_allow_html=True,
+            )
+            vals["co"] = st.slider("CO", 0.0, 50.0, vals["co"], 0.1,
+                                   key="sl_co", label_visibility="collapsed")
+            st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:#64748B;'>{vals['co']:.2f} (mg/m³)</div>",
+                        unsafe_allow_html=True)
+
+        with sc2:
+            st.markdown(
+                f"<div style='display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#0F172A; margin-bottom:0.1rem;'>"
+                f"<span style='width:0.7rem; height:0.7rem; border-radius:999px; background:{INFO_POLUTAN['PM10']['warna']};'></span>"
+                f"PM10</div>"
+                f"<div style='font-size:0.78rem; color:#64748B; margin-bottom:0.3rem;'>"
+                f"{INFO_POLUTAN['PM10']['deskripsi_pendek']}</div>",
+                unsafe_allow_html=True,
+            )
+            vals["pm10"] = st.slider("PM10", 0.0, 300.0, vals["pm10"], 0.5,
+                                     key="sl_pm10", label_visibility="collapsed")
+            st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:#64748B;'>{vals['pm10']:.2f} (µg/m³)</div>",
+                        unsafe_allow_html=True)
+
+            st.markdown(
+                f"<div style='display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#0F172A; margin-top:1rem; margin-bottom:0.1rem;'>"
+                f"<span style='width:0.7rem; height:0.7rem; border-radius:999px; background:{INFO_POLUTAN['SO₂']['warna']};'></span>"
+                f"SO₂</div>"
+                f"<div style='font-size:0.78rem; color:#64748B; margin-bottom:0.3rem;'>"
+                f"{INFO_POLUTAN['SO₂']['deskripsi_pendek']}</div>",
+                unsafe_allow_html=True,
+            )
+            vals["so2"] = st.slider("SO₂", 0.0, 200.0, vals["so2"], 0.5,
+                                    key="sl_so2", label_visibility="collapsed")
+            st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:#64748B;'>{vals['so2']:.2f} (µg/m³)</div>",
+                        unsafe_allow_html=True)
+
+            st.markdown(
+                f"<div style='display:flex; align-items:center; gap:0.4rem; font-weight:600; color:#0F172A; margin-top:1rem; margin-bottom:0.1rem;'>"
+                f"<span style='width:0.7rem; height:0.7rem; border-radius:999px; background:{INFO_POLUTAN['O₃']['warna']};'></span>"
+                f"O₃</div>"
+                f"<div style='font-size:0.78rem; color:#64748B; margin-bottom:0.3rem;'>"
+                f"{INFO_POLUTAN['O₃']['deskripsi_pendek']}</div>",
+                unsafe_allow_html=True,
+            )
+            vals["o3"] = st.slider("O₃", 0.0, 300.0, vals["o3"], 0.5,
+                                   key="sl_o3", label_visibility="collapsed")
+            st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:#64748B;'>{vals['o3']:.2f} (µg/m³)</div>",
+                        unsafe_allow_html=True)
+
+        # Buttons
         st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
-        bc1, bc2, _ = st.columns([1, 1, 2])
+        bc1, bc2, bc3 = st.columns([1, 1, 2])
         with bc1:
             if st.button("Submit Simulasi", key="btn_submit", type="primary", use_container_width=True):
                 st.session_state["sim_hasil"] = prediksi_ispu_xgboost(
@@ -1459,16 +1739,17 @@ def page_simulasi(data):
                 st.rerun()
         with bc2:
             if st.button("Reset", key="btn_reset", type="secondary", use_container_width=True):
-                st.session_state["sim_values"] = {"pm25": 50.0, "pm10": 70.0, "no2": 25.0,
-                                                  "so2": 35.0, "co": 1.5, "o3": 50.0}
+                st.session_state["sim_values"] = {"pm25": 50.0, "pm10": 70.0, "no2": 25.0, "so2": 35.0, "co": 1.5, "o3": 50.0}
                 st.session_state["sim_hasil"] = None
                 st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # ---- KANAN: Hasil prediksi
     with col_right:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Hasil Prediksi ISPU</div>", unsafe_allow_html=True)
+
         hasil = st.session_state["sim_hasil"]
 
         if hasil is None:
@@ -1479,9 +1760,13 @@ def page_simulasi(data):
                     <div style='font-size:0.95rem; font-weight:600; color:#475569;'>
                         Atur slider polutan, lalu klik <strong>Submit Simulasi</strong>
                     </div>
-                    <div style='font-size:0.82rem; margin-top:0.4rem;'>Prediksi akan ditampilkan di sini.</div>
+                    <div style='font-size:0.82rem; margin-top:0.4rem;'>
+                        Prediksi akan ditampilkan di sini.
+                    </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
         else:
             kat = hasil["kategori"]
             info = KATEGORI_INFO[kat]
@@ -1494,15 +1779,19 @@ def page_simulasi(data):
                     </div>
                     <div>
                         <div style='font-size:2.5rem; line-height:1;'>{info["emoji"]}</div>
-                        <div class='hero-status' style='color:{info["warna"]}; margin-top:0.4rem;'>Udara {kat}</div>
-                        <div class='hero-desc'>{info["deskripsi"]}</div>
+                        <div class='ispu-status' style='color:{info["warna"]}; margin-top:0.4rem;'>Udara {kat}</div>
+                        <div class='ispu-desc'>{info["deskripsi"]}</div>
                     </div>
                 </div>
+
                 <div class='rekom-box' style='border:1px solid {info["warna"]}40; background:{info["warna_bg"]};'>
                     <div class='rekom-box-title' style='color:{info["warna"]};'>Rekomendasi Aktivitas</div>
                     <div class='rekom-box-text' style='color:#334155;'>{info["rekomendasi"]}</div>
                 </div>
-                """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
+
             if hasil.get("confidence") is not None:
                 st.markdown(
                     f"""
@@ -1513,9 +1802,12 @@ def page_simulasi(data):
                             (tingkat keyakinan: <strong>{hasil["confidence"]*100:.1f}%</strong>).
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """,
+                    unsafe_allow_html=True,
+                )
+
             if hasil.get("fallback"):
-                st.warning("⚠ Model XGBoost belum tersedia; hasil menggunakan formula bobot polutan.")
+                st.warning("⚠ Model XGBoost belum tersedia; hasil menggunakan formula bobot polutan sederhana.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1530,12 +1822,16 @@ def page_edukasi(data):
         unsafe_allow_html=True,
     )
 
+    # Section 1: Mengenal ISPU + 5 kategori
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.markdown(
         "<div class='card-title'>Mengenal ISPU (Indeks Standar Pencemar Udara)</div>"
         "<div style='font-size:0.88rem; color:#475569; margin-bottom:1.2rem; line-height:1.5;'>"
-        "ISPU digunakan untuk menggambarkan kualitas udara ambien di sekitar kita.</div>",
-        unsafe_allow_html=True)
+        "ISPU digunakan untuk menggambarkan kualitas udara ambien di sekitar kita."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
     kc = st.columns(5, gap="small")
     for col, (nama, info) in zip(kc, KATEGORI_INFO.items()):
         with col:
@@ -1549,16 +1845,24 @@ def page_edukasi(data):
                     <div class='kat-name' style='color:{info["warna"]};'>{nama}</div>
                     <div class='kat-desc'>{info["deskripsi"]}</div>
                 </div>
-                """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div style='margin-top:1.2rem;'></div>", unsafe_allow_html=True)
+
+    # Section 2: Dampak Kesehatan + Sumber Polusi
     dc1, dc2 = st.columns([1.4, 1], gap="medium")
 
+    # Dampak Kesehatan
     with dc1:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown("<div class='card-title'>Dampak Kualitas Udara terhadap Kesehatan</div>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            "<div class='card-title'>Dampak Kualitas Udara terhadap Kesehatan</div>",
+            unsafe_allow_html=True,
+        )
+
         dampak = [
             ("🫁", "Sistem Pernapasan", "Polusi udara dapat menyebabkan iritasi, batuk, sesak napas, dan memperparah asma."),
             ("❤️", "Sistem Kardiovaskular", "Paparan jangka panjang meningkatkan risiko penyakit jantung dan tekanan darah tinggi."),
@@ -1577,17 +1881,24 @@ def page_edukasi(data):
                             <div style='font-size:0.82rem; color:#475569; line-height:1.5;'>{desc}</div>
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """,
+                    unsafe_allow_html=True,
+                )
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # Sumber Polusi - donut chart
     with dc2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Sumber Polusi Udara di Jakarta</div>", unsafe_allow_html=True)
+
         sumber = {
-            "Transportasi": (45, "#2563EB"), "Industri": (20, "#16A34A"),
-            "Aktivitas Rumah Tangga": (15, "#F59E0B"), "Konstruksi": (10, "#EF4444"),
+            "Transportasi": (45, "#2563EB"),
+            "Industri": (20, "#16A34A"),
+            "Aktivitas Rumah Tangga": (15, "#F59E0B"),
+            "Konstruksi": (10, "#EF4444"),
             "Lainnya": (10, "#7C3AED"),
         }
+
         chart_col, leg_col = st.columns([1, 1.1], gap="small")
         with chart_col:
             fig = go.Figure(go.Pie(
@@ -1599,9 +1910,14 @@ def page_edukasi(data):
                 textinfo="none",
                 hovertemplate="<b>%{label}</b><br>%{value}%<extra></extra>",
             ))
-            fig.update_layout(height=240, margin=dict(l=0, r=0, t=10, b=10),
-                              showlegend=False, paper_bgcolor="white")
+            fig.update_layout(
+                height=240,
+                margin=dict(l=0, r=0, t=10, b=10),
+                showlegend=False,
+                paper_bgcolor="white",
+            )
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
         with leg_col:
             st.markdown("<div style='padding-top:1rem;'>", unsafe_allow_html=True)
             for nama, (pct, warna) in sumber.items():
@@ -1614,14 +1930,22 @@ def page_edukasi(data):
                         </div>
                         <div class='donut-legend-pct'>{pct}%</div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """,
+                    unsafe_allow_html=True,
+                )
             st.markdown("</div>", unsafe_allow_html=True)
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div style='margin-top:1.2rem;'></div>", unsafe_allow_html=True)
+
+    # Section 3: Tips Kesehatan
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>💡 Tips Menjaga Kesehatan Saat Kualitas Udara Tidak Sehat</div>",
-                unsafe_allow_html=True)
+    st.markdown(
+        "<div class='card-title'>💡 Tips Menjaga Kesehatan Saat Kualitas Udara Tidak Sehat</div>",
+        unsafe_allow_html=True,
+    )
+
     tips = [
         ("😷",  "Gunakan Masker",       "Gunakan masker berstandar untuk mengurangi paparan polusi udara."),
         ("❌",  "Batasi Aktivitas Luar","Kurangi aktivitas fisik berat di luar ruangan, terutama saat sore hingga malam hari."),
@@ -1640,7 +1964,9 @@ def page_edukasi(data):
                     <div style='font-size:0.95rem; font-weight:700; color:#0F172A; margin-bottom:0.4rem;'>{judul}</div>
                     <div style='font-size:0.78rem; color:#64748B; line-height:1.5;'>{desc}</div>
                 </div>
-                """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1650,9 +1976,13 @@ def page_edukasi(data):
 def main():
     inject_css()
     data = load_data()
-    render_sidebar()
+    page = render_sidebar()
 
-    page = st.session_state.get("current_page", "Dashboard")
+    # Handle redirect dari tombol "Lihat Selengkapnya" di dashboard
+    if st.session_state.get("jump_to_detail"):
+        st.session_state["jump_to_detail"] = False
+        page = "Detail Wilayah"
+
     if page == "Dashboard":
         page_dashboard(data)
     elif page == "Detail Wilayah":
