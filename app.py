@@ -134,7 +134,7 @@ def inject_css():
 
     /* Background utama */
     .stApp {
-        background-color: #FAFBFC;
+        background-color: #FFFFFF;
     }
 
     /* Hilangkan top padding default */
