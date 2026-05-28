@@ -151,6 +151,24 @@ def inject_css():
     }
     #MainMenu, footer {visibility: hidden;}
 
+    /* FIX TAMBAHAN — hilangkan SEMUA chrome Streamlit yang masih muncul
+       (toolbar Share/star/edit/GitHub di kanan atas + "Manage app" di kanan bawah) */
+    [data-testid="stToolbar"],
+    [data-testid="stActionButton"],
+    [data-testid="stStatusWidget"],
+    [data-testid="stDecoration"],
+    .stDeployButton,
+    .stAppDeployButton,
+    button[kind="header"],
+    button[kind="headerNoPadding"],
+    div[class*="viewerBadge"],
+    iframe[title="streamlit_app"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    /* Toolbar wrapper kosong tetap memakan tinggi → set 0 */
+    .stApp > header { height: 0 !important; }
+
     /* ============ SIDEBAR ============ */
     [data-testid="stSidebar"] {
         background-color: #FFFFFF;
@@ -601,6 +619,30 @@ def inject_css():
         color: #2563EB;
     }
 
+    /* FIX TAMBAHAN — outline pill button (sesuai mockup):
+       latar putih, teks biru, border biru tipis. Dipakai untuk tombol
+       "Lihat penjelasan polutan" dan "Lihat Selengkapnya". */
+    .stButton > button.outline-pill,
+    div[data-testid="stButton"] > button {
+        /* default semua button non-primary jadi outline pill modern */
+    }
+    /* Khusus untuk tombol info polutan & lihat selengkapnya — pakai key match */
+    div[data-testid="stButton"]:has(button[aria-label*="penjelasan"]) > button,
+    div[data-testid="stButton"]:has(button[aria-label*="Selengkapnya"]) > button {
+        background: #FFFFFF;
+        color: #2563EB;
+        border: 1px solid #2563EB;
+        font-weight: 600;
+    }
+    div[data-testid="stButton"]:has(button[aria-label*="penjelasan"]) > button:hover,
+    div[data-testid="stButton"]:has(button[aria-label*="Selengkapnya"]) > button:hover {
+        background: #EFF6FF;
+        color: #1D4ED8;
+        border-color: #1D4ED8;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+    }
+
     /* ============ SLIDER ============ */
     .stSlider [data-baseweb="slider"] [role="slider"] {
         background-color: #2563EB;
@@ -701,19 +743,29 @@ def kategori_dari_ispu(ispu):
 # Logo sprout #0A6847 dan ilustrasi Jakarta juga dipindah ke SVG inline.
 # =================================================================
 def logo_jaku_svg(size=40):
-    """Logo JakU - sprout #0A6847 + teks. Inline SVG (tidak butuh file)."""
+    """
+    Logo JakU - sprout sesuai mockup Figma.
+    Tiga daun mekar (gelap-terang-tunas) + 2 tetesan biru kecil di bawah daun.
+    """
     return f"""
     <svg width="{size}" height="{size}" viewBox="0 0 64 64"
          xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">
       <!-- Daun kiri (gelap) -->
-      <path d="M32 40 C18 40 10 28 14 14 C28 16 36 28 32 40 Z" fill="#0A6847"/>
-      <!-- Daun kanan (terang) -->
-      <path d="M32 38 C46 38 54 26 50 12 C36 14 28 26 32 38 Z" fill="#16A34A"/>
-      <!-- Tunas tengah -->
-      <ellipse cx="32" cy="20" rx="2.5" ry="6" fill="#22C55E"/>
+      <path d="M30 36 C16 36 8 24 12 10 C26 12 34 24 30 36 Z"
+            fill="#0A6847"/>
+      <!-- Daun kanan (sedang) -->
+      <path d="M34 32 C48 32 56 20 52 6 C38 8 30 20 34 32 Z"
+            fill="#16A34A"/>
+      <!-- Tunas tengah (lancip ke atas, hijau muda) -->
+      <path d="M32 30 C30 22 32 14 32 8 C32 14 34 22 32 30 Z"
+            fill="#22C55E"/>
       <!-- Batang -->
-      <path d="M32 52 L32 38" stroke="#0A6847" stroke-width="3"
+      <path d="M32 48 L32 32" stroke="#0A6847" stroke-width="2.5"
             stroke-linecap="round" fill="none"/>
+      <!-- Tetesan biru kiri & kanan (aksen air) -->
+      <circle cx="26" cy="52" r="2.5" fill="#3B82F6"/>
+      <circle cx="38" cy="52" r="2.5" fill="#3B82F6"/>
+      <ellipse cx="32" cy="56" rx="3" ry="2" fill="#2563EB" opacity="0.85"/>
     </svg>
     """.strip()
 
@@ -763,38 +815,69 @@ def ispu_emoji_svg(kategori, size=72):
 def jakarta_skyline_svg(width=180):
     """
     Ilustrasi flat Jakarta skyline (Monas + gedung).
-    Tone hijau-biru lembut sesuai mockup.
+    Mengikuti mockup: gradient lembut, gedung outline tipis biru-abu,
+    Monas tegak dengan ujung emas, pohon-pohon hijau di foreground.
     """
     return f"""
-    <svg width="{width}" viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg">
+    <svg width="{width}" viewBox="0 0 200 130"
+         xmlns="http://www.w3.org/2000/svg"
+         style="display:block; opacity:0.95;">
       <defs>
         <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#EFF6FF"/>
-          <stop offset="100%" stop-color="#ECFDF5"/>
+          <stop offset="55%" stop-color="#F0FDF4"/>
+          <stop offset="100%" stop-color="#FFFFFF"/>
         </linearGradient>
       </defs>
-      <!-- Background sky -->
-      <rect width="200" height="115" fill="url(#skyGrad)" rx="8"/>
-      <!-- Gedung-gedung kiri (siluet) -->
-      <rect x="14" y="70" width="20" height="45" fill="#94A3B8" opacity="0.55" rx="1"/>
-      <rect x="38" y="55" width="16" height="60" fill="#64748B" opacity="0.55" rx="1"/>
-      <rect x="58" y="68" width="22" height="47" fill="#94A3B8" opacity="0.55" rx="1"/>
-      <!-- Monas (tugu tengah) -->
-      <rect x="96" y="42" width="5" height="73" fill="#475569"/>
-      <polygon points="93,42 104,42 98.5,30" fill="#FBBF24"/>
-      <rect x="92" y="100" width="13" height="15" fill="#64748B"/>
+      <!-- Background gradient -->
+      <rect width="200" height="120" fill="url(#skyGrad)" rx="6"/>
+      <!-- Gedung-gedung latar (outline tipis, fill sangat lembut) -->
+      <rect x="10" y="78" width="18" height="38" fill="#DBEAFE"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <rect x="30" y="62" width="14" height="54" fill="#E0E7FF"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <rect x="46" y="72" width="20" height="44" fill="#DBEAFE"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <rect x="68" y="58" width="16" height="58" fill="#E0E7FF"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <!-- Jendela2 simbolik untuk gedung kiri -->
+      <line x1="34" y1="72" x2="42" y2="72" stroke="#94A3B8"
+            stroke-width="0.4" opacity="0.6"/>
+      <line x1="34" y1="82" x2="42" y2="82" stroke="#94A3B8"
+            stroke-width="0.4" opacity="0.6"/>
+      <line x1="34" y1="92" x2="42" y2="92" stroke="#94A3B8"
+            stroke-width="0.4" opacity="0.6"/>
+      <!-- Monas (tugu tengah, paling tinggi) -->
+      <rect x="98" y="40" width="4" height="76" fill="#E5E7EB"
+            stroke="#64748B" stroke-width="0.5"/>
+      <!-- Ujung emas Monas (puncak api) -->
+      <polygon points="96,40 104,40 100,28" fill="#FBBF24"
+               stroke="#D97706" stroke-width="0.4"/>
+      <!-- Base Monas (alas) -->
+      <rect x="92" y="106" width="16" height="10" fill="#E5E7EB"
+            stroke="#64748B" stroke-width="0.5"/>
       <!-- Gedung-gedung kanan -->
-      <rect x="115" y="60" width="18" height="55" fill="#64748B" opacity="0.55" rx="1"/>
-      <rect x="137" y="72" width="20" height="43" fill="#94A3B8" opacity="0.55" rx="1"/>
-      <rect x="161" y="58" width="16" height="57" fill="#64748B" opacity="0.55" rx="1"/>
-      <rect x="180" y="75" width="14" height="40" fill="#94A3B8" opacity="0.55" rx="1"/>
-      <!-- Pohon-pohon depan -->
-      <circle cx="22" cy="112" r="9" fill="#16A34A" opacity="0.85"/>
-      <circle cx="76" cy="115" r="7" fill="#16A34A" opacity="0.85"/>
-      <circle cx="128" cy="115" r="8" fill="#16A34A" opacity="0.85"/>
-      <circle cx="180" cy="113" r="9" fill="#16A34A" opacity="0.85"/>
-      <!-- Garis tanah -->
-      <line x1="0" y1="115" x2="200" y2="115" stroke="#E5E7EB" stroke-width="1"/>
+      <rect x="116" y="68" width="16" height="48" fill="#E0E7FF"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <rect x="134" y="75" width="20" height="41" fill="#DBEAFE"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <rect x="156" y="60" width="14" height="56" fill="#E0E7FF"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <rect x="172" y="72" width="18" height="44" fill="#DBEAFE"
+            stroke="#94A3B8" stroke-width="0.6" opacity="0.55" rx="1"/>
+      <!-- Jendela2 simbolik gedung kanan -->
+      <line x1="138" y1="85" x2="150" y2="85" stroke="#94A3B8"
+            stroke-width="0.4" opacity="0.6"/>
+      <line x1="138" y1="95" x2="150" y2="95" stroke="#94A3B8"
+            stroke-width="0.4" opacity="0.6"/>
+      <!-- Pohon-pohon foreground (hijau bulat) -->
+      <circle cx="14" cy="116" r="8" fill="#16A34A" opacity="0.9"/>
+      <circle cx="74" cy="118" r="6" fill="#16A34A" opacity="0.9"/>
+      <circle cx="124" cy="118" r="7" fill="#16A34A" opacity="0.9"/>
+      <circle cx="186" cy="116" r="8" fill="#16A34A" opacity="0.9"/>
+      <!-- Detail pohon (tone berbeda untuk depth) -->
+      <circle cx="20" cy="114" r="5" fill="#22C55E" opacity="0.85"/>
+      <circle cx="180" cy="114" r="5" fill="#22C55E" opacity="0.85"/>
     </svg>
     """.strip()
 
@@ -1112,9 +1195,10 @@ def page_dashboard(data):
                     "<div style='padding-top:1.4rem;'></div>",
                     unsafe_allow_html=True,
                 )
+                # FIX — button TIDAK full-width supaya tampil sebagai pill kompak
+                # sesuai mockup (sebelumnya use_container_width=True bikin meluas)
                 if st.button("ⓘ  Lihat penjelasan polutan",
-                             key="btn_info_dashboard",
-                             use_container_width=True):
+                             key="btn_info_dashboard"):
                     render_popup_polutan()
 
             # 6 polutan compact — SATU markdown call
@@ -1163,7 +1247,9 @@ def page_dashboard(data):
                     dragging=True,
                 )
                 # Batas tampilan supaya tidak terlalu zoom-out ke Tangerang/Bekasi
-                m.fit_bounds([[-6.37, 106.69], [-6.08, 107.00]])
+                # FIX — bounds lebih ketat untuk fokus DKI saja (sebelumnya
+                # masih kelihatan Tangerang & Bekasi besar di mockup)
+                m.fit_bounds([[-6.32, 106.75], [-6.10, 106.95]])
                 for _, row in data["wilayah"].iterrows():
                     kat_w = row["kategori"]
                     warna = KATEGORI_INFO.get(
@@ -1198,17 +1284,16 @@ def page_dashboard(data):
                 # FIX #1 + #2 — legend reliable via render_legend_safe
                 render_legend_safe(KATEGORI_INFO)
 
-            # Tombol "Lihat Selengkapnya" — di bawah, masih dalam kartu peta
-            # (FIX #7 — sebelumnya tombol terpisah jauh dari peta)
-            st.markdown(
-                "<div style='margin-top:0.8rem;'></div>",
-                unsafe_allow_html=True,
-            )
-            _spacer, btn_col = st.columns([2, 1])
-            with btn_col:
+                # FIX — tombol "Lihat Selengkapnya" sekarang di KOLOM LEGEND
+                # (kanan-bawah, sejajar di samping peta) sesuai mockup,
+                # bukan di baris terpisah di bawah peta + legend.
+                # Style: outline pill (bukan solid primary) — match mockup.
+                st.markdown(
+                    "<div style='margin-top:1.2rem;'></div>",
+                    unsafe_allow_html=True,
+                )
                 if st.button("Lihat Selengkapnya  →",
                              key="btn_selengkapnya",
-                             type="primary",
                              use_container_width=True):
                     st.session_state["jump_to_detail"] = True
                     st.rerun()
