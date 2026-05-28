@@ -382,10 +382,12 @@ def inject_css():
     /* ============ PREDIKSI LIST ============ */
     .pred-row {
         display: grid;
-        grid-template-columns: 1.1fr 0.7fr 1fr 0.8fr;
+        /* FIX — kolom fixed-width supaya semua baris align presisi: tanggal | badge | kategori | µg/m³
+           sebelumnya pakai fr-ratio → spasi tidak konsisten antar baris */
+        grid-template-columns: 105px 70px 1fr 90px;
         align-items: center;
-        gap: 0.8rem;
-        padding: 0.55rem 0;
+        gap: 0.75rem;
+        padding: 0.65rem 0;
         border-bottom: 1px solid #F1F5F9;
     }
     .pred-row:last-child { border-bottom: none; }
@@ -393,6 +395,7 @@ def inject_css():
         font-size: 0.88rem;
         color: #334155;
         font-weight: 500;
+        white-space: nowrap;
     }
     .pred-pill {
         display: inline-block;
@@ -405,13 +408,15 @@ def inject_css():
         min-width: 3rem;
     }
     .pred-cat {
-        font-size: 0.85rem;
+        font-size: 0.88rem;
         font-weight: 600;
+        white-space: nowrap;
     }
     .pred-pm {
-        font-size: 0.82rem;
+        font-size: 0.83rem;
         color: #64748B;
         text-align: right;
+        white-space: nowrap;
     }
 
     /* ============ REKOMENDASI CARD ============ */
@@ -641,6 +646,20 @@ def inject_css():
         border-color: #1D4ED8;
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+    }
+
+    /* FIX TAMBAHAN — right-align tombol "Lihat penjelasan polutan"
+       di dalam kolomnya. Tanpa ini, tombol rapat kiri di column 1/3
+       dengan whitespace di kanan (floating effect yang tidak rapi). */
+    div[data-testid="stHorizontalBlock"]:has(button[aria-label*="penjelasan"])
+        > div:last-child > div[data-testid="stVerticalBlock"] {
+        align-items: flex-end !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(button[aria-label*="penjelasan"])
+        > div:last-child div[data-testid="stButton"] {
+        display: flex !important;
+        justify-content: flex-end !important;
+        width: 100%;
     }
 
     /* ============ SLIDER ============ */
@@ -1146,44 +1165,75 @@ def page_dashboard(data):
                 unsafe_allow_html=True,
             )
 
-            # Hero: angka ISPU besar | emoji+status+desc | ilustrasi Jakarta
-            # Dibuat sebagai SATU markdown supaya layout terkunci rapi
-            hero_html = (
-                "<div style='display:flex; align-items:flex-start; gap:1.5rem; "
-                "margin-top:0.25rem;'>"
-                # Kolom 1: angka ISPU + label
-                "<div style='flex-shrink:0;'>"
-                f"<div style='font-size:5rem; font-weight:800; line-height:0.95; "
-                f"letter-spacing:-0.05em; color:{info['warna']};'>{ispu_avg}</div>"
-                "<div style='font-size:0.92rem; font-weight:600; color:#64748B; "
-                "margin-top:0.3rem;'>ISPU</div>"
-                "</div>"
-                # Kolom 2: emoji SVG + status + deskripsi
-                "<div style='flex:1; padding-top:0.4rem;'>"
-                f"<div style='margin-bottom:0.5rem;'>{ispu_emoji_svg(kat, size=56)}</div>"
-                f"<div style='font-size:1.4rem; font-weight:700; color:{info['warna']}; "
-                "margin-bottom:0.35rem;'>"
-                f"Udara {kat}</div>"
-                f"<div style='font-size:0.86rem; color:#475569; line-height:1.55; "
-                f"max-width:22rem;'>{info['deskripsi']}</div>"
-                "</div>"
-                # Kolom 3: ilustrasi Jakarta
-                "<div style='margin-left:auto; padding-top:0.2rem;'>"
-                f"{jakarta_skyline_svg(width=170)}"
-                "<div style='text-align:center; font-size:0.8rem; color:#64748B; "
-                "font-weight:500; margin-top:0.3rem;'>DKI Jakarta</div>"
-                "</div>"
-                "</div>"
-            )
-            st.markdown(hero_html, unsafe_allow_html=True)
+            # Hero layout: pakai Streamlit columns [2, 1] untuk presisi.
+            # Sebelumnya pakai single markdown dengan flex 3-child → ilustrasi
+            # tidak konsisten posisinya.
+            hero_main, hero_illust = st.columns([2.4, 1], gap="small")
 
-            # Polutan dominan + tombol popup
-            pdc1, pdc2 = st.columns([2, 1])
+            with hero_main:
+                # SATU markdown: angka 78 (kiri) + emoji SVG/status/desc (kanan)
+                # dengan flex inline, predictable height.
+                st.markdown(
+                    "<div style='display:flex; align-items:flex-start; "
+                    "gap:1.5rem; margin-top:0.25rem;'>"
+                    # Kolom kiri: angka ISPU + label
+                    "<div style='flex-shrink:0;'>"
+                    f"<div style='font-size:5rem; font-weight:800; "
+                    f"line-height:0.95; letter-spacing:-0.05em; "
+                    f"color:{info['warna']};'>{ispu_avg}</div>"
+                    "<div style='font-size:0.92rem; font-weight:600; "
+                    "color:#64748B; margin-top:0.3rem;'>ISPU</div>"
+                    "</div>"
+                    # Kolom kanan: emoji SVG + status + deskripsi
+                    "<div style='flex:1; padding-top:0.3rem;'>"
+                    f"<div style='margin-bottom:0.55rem;'>"
+                    f"{ispu_emoji_svg(kat, size=52)}</div>"
+                    f"<div style='font-size:1.35rem; font-weight:700; "
+                    f"color:{info['warna']}; margin-bottom:0.4rem;'>"
+                    f"Udara {kat}</div>"
+                    "<div style='font-size:0.86rem; color:#475569; "
+                    "line-height:1.55;'>"
+                    f"{info['deskripsi']}</div>"
+                    "</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+            with hero_illust:
+                # Ilustrasi Jakarta + caption — center di kolomnya sendiri,
+                # tidak lagi tergantung margin-left:auto yang plin-plan.
+                st.markdown(
+                    "<div style='text-align:center; padding-top:0.4rem;'>"
+                    f"{jakarta_skyline_svg(width=180)}"
+                    "<div style='font-size:0.8rem; color:#64748B; "
+                    "font-weight:500; margin-top:0.2rem;'>DKI Jakarta</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+            # ─── Polutan dominan strip + tombol info polutan ───
+            # FIX — sebelumnya tombol "floating" di tengah card karena
+            # padding-top fix tidak match dengan baseline polutan strip.
+            # Sekarang: garis separator full-width via markdown, lalu
+            # strip pakai 2-column dengan vertical_alignment="center"
+            # supaya tombol & teks polutan benar-benar sejajar baseline.
+            st.markdown(
+                "<div style='border-top:1px solid #F1F5F9; "
+                "margin-top:1.1rem;'></div>",
+                unsafe_allow_html=True,
+            )
+
+            try:
+                pdc1, pdc2 = st.columns([1.6, 1], vertical_alignment="center")
+            except TypeError:
+                # Fallback untuk Streamlit < 1.36 yang tidak punya vertical_alignment
+                pdc1, pdc2 = st.columns([1.6, 1])
+
             with pdc1:
                 st.markdown(
-                    "<div style='display:flex; align-items:center; gap:0.5rem; "
-                    "padding-top:1.3rem; margin-top:1.2rem; "
-                    "border-top:1px solid #F1F5F9; font-size:0.92rem; color:#0F172A;'>"
+                    "<div style='display:flex; align-items:center; "
+                    "gap:0.5rem; padding-top:0.85rem; font-size:0.92rem; "
+                    "color:#0F172A;'>"
                     "<span style='color:#16A34A; font-size:1.05rem;'>🌿</span>"
                     "<span><strong>Polutan dominan:</strong>&nbsp; "
                     "PM2.5 (24 µg/m³)</span>"
@@ -1191,12 +1241,8 @@ def page_dashboard(data):
                     unsafe_allow_html=True,
                 )
             with pdc2:
-                st.markdown(
-                    "<div style='padding-top:1.4rem;'></div>",
-                    unsafe_allow_html=True,
-                )
-                # FIX — button TIDAK full-width supaya tampil sebagai pill kompak
-                # sesuai mockup (sebelumnya use_container_width=True bikin meluas)
+                # Tombol natural-width; CSS di awal file akan right-align
+                # via :has selector untuk kolom yang memuat tombol ini.
                 if st.button("ⓘ  Lihat penjelasan polutan",
                              key="btn_info_dashboard"):
                     render_popup_polutan()
@@ -1237,19 +1283,23 @@ def page_dashboard(data):
             # Peta + legend side-by-side
             mc1, mc2 = st.columns([1.9, 1], gap="small")
             with mc1:
-                # FIX #7 — zoom 10 → 11, fokus ke DKI Jakarta saja
+                # FIX — zoom 11 → 12 dan max_bounds untuk benar-benar kunci ke DKI.
+                # Sebelumnya fit_bounds tidak cukup ketat → Tangerang & Bekasi
+                # masih besar di viewport.
                 m = folium.Map(
                     location=[-6.2088, 106.8456],
-                    zoom_start=11,
+                    zoom_start=12,
                     tiles="CartoDB positron",
                     zoom_control=False,
                     scrollWheelZoom=False,
                     dragging=True,
+                    min_zoom=11,
+                    max_zoom=14,
                 )
-                # Batas tampilan supaya tidak terlalu zoom-out ke Tangerang/Bekasi
-                # FIX — bounds lebih ketat untuk fokus DKI saja (sebelumnya
-                # masih kelihatan Tangerang & Bekasi besar di mockup)
-                m.fit_bounds([[-6.32, 106.75], [-6.10, 106.95]])
+                # Hard-lock viewport ke DKI Jakarta
+                m.options['maxBounds'] = [[-6.40, 106.65], [-6.05, 107.05]]
+                m.options['maxBoundsViscosity'] = 1.0
+                m.fit_bounds([[-6.30, 106.78], [-6.10, 106.95]])
                 for _, row in data["wilayah"].iterrows():
                     kat_w = row["kategori"]
                     warna = KATEGORI_INFO.get(
@@ -1375,13 +1425,21 @@ def page_dashboard(data):
                     xshift=8,
                 )
             fig.update_layout(
-                height=320,
-                margin=dict(l=20, r=130, t=20, b=20),
+                # FIX — margin lebih besar di kiri/kanan/atas supaya label "62"
+                # (di awal) dan "78" (di akhir) tidak terpotong; t=45 supaya
+                # angka di atas marker tidak nyentuh batas card.
+                height=340,
+                margin=dict(l=40, r=140, t=50, b=30),
                 paper_bgcolor="white", plot_bgcolor="white",
-                xaxis=dict(showgrid=False, showline=False,
-                           tickfont=dict(size=11, color="#64748B")),
+                xaxis=dict(
+                    showgrid=False, showline=False,
+                    tickfont=dict(size=11, color="#64748B"),
+                    # Padding kiri-kanan: extend domain agar marker awal/akhir
+                    # punya breathing room untuk label
+                    range=[-0.4, 6.4],
+                ),
                 yaxis=dict(
-                    range=[0, 310], gridcolor="#F1F5F9", showline=False,
+                    range=[0, 320], gridcolor="#F1F5F9", showline=False,
                     tickfont=dict(size=11, color="#94A3B8"),
                     tickvals=[0, 50, 100, 150, 200, 300],
                 ),
